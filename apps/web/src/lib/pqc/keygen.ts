@@ -30,7 +30,7 @@ export async function generateAndEncryptKeys(
 
   return {
     bundle,
-    encryptedBundle: ciphertext.buffer,
+    encryptedBundle: ciphertext.buffer as ArrayBuffer,
     iv,
     encapsulatedKey,
   };

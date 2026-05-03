@@ -1,77 +1,46 @@
+import { ml_kem1024 } from '@noble/post-quantum/ml-kem';
 import type { KyberKeypair, KyberEncryptResult } from './types.js';
 import { keccak256Fingerprint } from './utils.js';
 
-// Algorithm: Kyber-1024 (NIST FIPS 203 — ML-KEM-1024)
-const ALG = 'Kyber1024';
+// TypeScript 5.9 stricter generics: Uint8Array<ArrayBufferLike> != ArrayBufferView<ArrayBuffer>.
+// @noble returns fresh ArrayBuffer-backed arrays; this cast is safe.
+const ab = (u: Uint8Array): Uint8Array<ArrayBuffer> => u as unknown as Uint8Array<ArrayBuffer>;
 
-async function getOQS() {
-  const { OQS } = await import('liboqs-js');
-  return OQS;
+export function generateKyberKeypair(): KyberKeypair {
+  const seed = crypto.getRandomValues(new Uint8Array(64));
+  const { secretKey, publicKey } = ml_kem1024.keygen(seed);
+  return { publicKey, secretKey, fingerprint: keccak256Fingerprint(publicKey) };
 }
 
-export async function generateKyberKeypair(): Promise<KyberKeypair> {
-  const OQS = await getOQS();
-  const kem = new OQS.KeyEncapsulation(ALG);
-  const { publicKey, secretKey } = kem.keypair();
-  kem.free();
-  return {
-    publicKey,
-    secretKey,
-    fingerprint: keccak256Fingerprint(publicKey),
-  };
+export function kyberEncapsulate(recipientPublicKey: Uint8Array): KyberEncryptResult {
+  const seed = crypto.getRandomValues(new Uint8Array(32));
+  const { cipherText, sharedSecret } = ml_kem1024.encapsulate(recipientPublicKey, seed);
+  return { ciphertext: cipherText, sharedSecret };
 }
 
-/** Encapsulate: generates a shared secret encrypted under the recipient's public key */
-export async function kyberEncapsulate(
-  recipientPublicKey: Uint8Array
-): Promise<KyberEncryptResult> {
-  const OQS = await getOQS();
-  const kem = new OQS.KeyEncapsulation(ALG);
-  const { ciphertext, sharedSecret } = kem.encapsulate(recipientPublicKey);
-  kem.free();
-  return { ciphertext, sharedSecret };
+export function kyberDecapsulate(secretKey: Uint8Array, ciphertext: Uint8Array): Uint8Array {
+  return ml_kem1024.decapsulate(ciphertext, secretKey);
 }
 
-/** Decapsulate: recovers shared secret using secret key */
-export async function kyberDecapsulate(
-  secretKey: Uint8Array,
-  ciphertext: Uint8Array
-): Promise<Uint8Array> {
-  const OQS = await getOQS();
-  const kem = new OQS.KeyEncapsulation(ALG);
-  const sharedSecret = kem.decapsulate(ciphertext, secretKey);
-  kem.free();
-  return sharedSecret;
-}
-
-/** Encrypt arbitrary plaintext using AES-256-GCM keyed by the Kyber shared secret */
 export async function kyberEncrypt(
   recipientPublicKey: Uint8Array,
   plaintext: Uint8Array
 ): Promise<{ ciphertext: Uint8Array; encapsulatedKey: Uint8Array; iv: Uint8Array }> {
-  const { ciphertext: encapsulatedKey, sharedSecret } = await kyberEncapsulate(recipientPublicKey);
-
-  // Derive AES key from shared secret via Web Crypto
-  const cryptoKey = await crypto.subtle.importKey('raw', sharedSecret, 'AES-GCM', false, ['encrypt']);
+  const { ciphertext: encapsulatedKey, sharedSecret } = kyberEncapsulate(recipientPublicKey);
+  const cryptoKey = await crypto.subtle.importKey('raw', ab(sharedSecret), 'AES-GCM', false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, plaintext);
-
-  return {
-    ciphertext: new Uint8Array(encrypted),
-    encapsulatedKey,
-    iv,
-  };
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, ab(plaintext));
+  return { ciphertext: new Uint8Array(encrypted), encapsulatedKey, iv };
 }
 
-/** Decrypt plaintext using secret key + encapsulated key */
 export async function kyberDecrypt(
   secretKey: Uint8Array,
   encapsulatedKey: Uint8Array,
   ciphertext: Uint8Array,
   iv: Uint8Array
 ): Promise<Uint8Array> {
-  const sharedSecret = await kyberDecapsulate(secretKey, encapsulatedKey);
-  const cryptoKey = await crypto.subtle.importKey('raw', sharedSecret, 'AES-GCM', false, ['decrypt']);
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext);
+  const sharedSecret = kyberDecapsulate(secretKey, encapsulatedKey);
+  const cryptoKey = await crypto.subtle.importKey('raw', ab(sharedSecret), 'AES-GCM', false, ['decrypt']);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ab(iv) }, cryptoKey, ab(ciphertext));
   return new Uint8Array(decrypted);
 }

@@ -1,52 +1,60 @@
 import { createZGComputeNetworkBroker } from '@0glabs/0g-serving-broker';
 import OpenAI from 'openai';
-import type { ethers } from 'ethers';
+import type { Signer } from 'ethers';
 import type { MarketRegime } from '../types.js';
 
-const CHAIN_ID = parseInt(process.env.ZG_CHAIN_ID ?? '16602');
 const INFERENCE_PROVIDER = process.env.ZG_INFERENCE_PROVIDER ?? '';
 
-export async function createBroker(signer: ethers.Signer) {
-  return createZGComputeNetworkBroker(signer as any, CHAIN_ID);
+export async function createBroker(signer: Signer) {
+  // Contract addresses are auto-detected from chain ID in the signer's provider
+  return createZGComputeNetworkBroker(signer as any);
 }
 
-export async function setupLedger(signer: ethers.Signer, fundAmountEth = '3'): Promise<void> {
+export async function setupLedger(signer: Signer, fundAmount = 3): Promise<void> {
   const broker = await createBroker(signer);
-  const { ethers } = await import('ethers');
-  await broker.ledger.addLedger(ethers.parseEther(fundAmountEth));
+  await broker.ledger.addLedger(fundAmount);
   await broker.inference.acknowledgeProviderSigner(INFERENCE_PROVIDER);
-  await broker.ledger.transferFund(INFERENCE_PROVIDER, 'inference', ethers.parseEther('1'));
+  const { parseEther } = await import('ethers');
+  await broker.ledger.transferFund(INFERENCE_PROVIDER, 'inference', parseEther('1'));
 }
 
 export async function inferMarketRegime(
-  signer: ethers.Signer,
+  signer: Signer,
   priceHistory: Array<{ asset: string; prices: number[] }>
 ): Promise<MarketRegime> {
-  const broker = await createBroker(signer);
-  const { endpoint, model } = await broker.inference.getServiceMetadata(INFERENCE_PROVIDER);
+  if (!INFERENCE_PROVIDER) return heuristicRegime(priceHistory);
 
-  const messages = [
-    {
-      role: 'system' as const,
-      content: 'Classify the current market regime as one of: bull, bear, sideways, volatile. Respond with exactly one word.',
-    },
-    {
-      role: 'user' as const,
-      content: `Price history (last 30 days per asset): ${JSON.stringify(priceHistory)}`,
-    },
-  ];
+  try {
+    const broker = await createBroker(signer);
+    const { endpoint, model } = await broker.inference.getServiceMetadata(INFERENCE_PROVIDER);
+    const content = `Price history: ${JSON.stringify(priceHistory)}. Classify as bull, bear, sideways, or volatile. One word only.`;
+    const headers = await broker.inference.getRequestHeaders(INFERENCE_PROVIDER, content);
+    const openai = new OpenAI({ baseURL: endpoint, apiKey: '' });
 
-  const headers = await broker.inference.getRequestHeaders(INFERENCE_PROVIDER, messages);
-  const openai = new OpenAI({ baseURL: endpoint, apiKey: '' });
+    const response = await openai.chat.completions.create(
+      { model, messages: [{ role: 'user', content }] },
+      { headers } as any
+    );
 
-  const response = await openai.chat.completions.create(
-    { model, messages },
-    { headers } as any
+    const reply = response.choices[0].message.content?.trim().toLowerCase() ?? 'sideways';
+    await broker.inference.processResponse(INFERENCE_PROVIDER, response.id, reply);
+    const valid: MarketRegime[] = ['bull', 'bear', 'sideways', 'volatile'];
+    return valid.includes(reply as MarketRegime) ? (reply as MarketRegime) : 'sideways';
+  } catch {
+    return heuristicRegime(priceHistory);
+  }
+}
+
+// Local fallback when 0G Compute provider is not configured
+function heuristicRegime(priceHistory: Array<{ asset: string; prices: number[] }>): MarketRegime {
+  if (!priceHistory.length) return 'sideways';
+  const changes = priceHistory.map(({ prices }) =>
+    prices.length < 2 ? 0 : (prices[prices.length - 1] - prices[0]) / prices[0]
   );
-
-  const content = response.choices[0].message.content?.trim().toLowerCase() ?? 'sideways';
-  await broker.inference.processResponse(INFERENCE_PROVIDER, response.id, content);
-
-  const valid: MarketRegime[] = ['bull', 'bear', 'sideways', 'volatile'];
-  return valid.includes(content as MarketRegime) ? (content as MarketRegime) : 'sideways';
+  const avg = changes.reduce((a, b) => a + b, 0) / changes.length;
+  const vol = Math.sqrt(changes.reduce((a, b) => a + (b - avg) ** 2, 0) / changes.length);
+  if (vol > 0.1) return 'volatile';
+  if (avg > 0.05) return 'bull';
+  if (avg < -0.05) return 'bear';
+  return 'sideways';
 }

@@ -17,7 +17,8 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "liboqs-js": "^0.10.0"
+    "@noble/post-quantum": "^0.2.1",
+    "viem": "^2.9.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

@@ -1,10 +1,10 @@
-import { Router } from 'express';
+import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 
 // In-memory agent state store — replace with 0G KV in production
 const agents = new Map<number, { status: 'active' | 'paused'; config: unknown; lastAction?: string }>();
 
-export const router = Router();
+export const router: ExpressRouter = Router();
 
 router.get('/health', (_req, res) => {
   res.json({ status: 'ok', agents: agents.size });

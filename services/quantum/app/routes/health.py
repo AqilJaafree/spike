@@ -1,18 +1,17 @@
 from fastapi import APIRouter
-from app.services.ibm_runtime import get_backend_status
+from qiskit_aer import AerSimulator
 
 router = APIRouter()
 
-@router.get("/health")
+@router.get('/health')
 async def health():
-    backend = await get_backend_status()
-    return {"status": "ok", "backend": backend}
+    sim = AerSimulator()
+    return {'status': 'ok', 'backend': sim.name, 'type': 'aer_simulator'}
 
-@router.get("/supported-backends")
+@router.get('/supported-backends')
 async def supported_backends():
     return {
-        "backends": [
-            {"name": "ibm_heron_r3", "qubits": 176, "type": "real_qpu"},
-            {"name": "aer_simulator", "qubits": 32, "type": "simulator"},
+        'backends': [
+            {'name': 'aer_simulator', 'qubits': 32, 'type': 'simulator'},
         ]
     }
