@@ -1,0 +1,25 @@
+{
+  "name": "spike",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "docker:quantum": "docker build -t spike-quantum ./services/quantum",
+    "contracts:compile": "pnpm --filter @spike/contracts compile",
+    "contracts:deploy:testnet": "pnpm --filter @spike/contracts deploy:testnet",
+    "contracts:deploy:mainnet": "pnpm --filter @spike/contracts deploy:mainnet"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0",
+    "prettier": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

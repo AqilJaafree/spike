@@ -1,0 +1,39 @@
+# Claude Code local settings (machine-specific, may contain secrets)
+.claude/settings.local.json
+.claude/worktrees/
+
+# Claude plugin (project-local plugin config)
+.claude-plugin/
+
+# Node
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+
+# Next.js
+.next/
+out/
+
+# Hardhat / contracts
+artifacts/
+cache/
+typechain-types/
+deployments.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Turbo
+.turbo/
+
+# OS
+.DS_Store
+Thumbs.db

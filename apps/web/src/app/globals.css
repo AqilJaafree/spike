@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-sage: #D9E4DD;
+  --color-cream: #FBF7F0;
+  --color-stone: #CDC9C3;
+  --color-charcoal: #555555;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-nunito-sans), sans-serif;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-nunito), sans-serif;
+  }
+}
