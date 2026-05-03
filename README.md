@@ -187,6 +187,17 @@ This starts (in parallel via Turborepo):
 
 ## Smart Contracts
 
+### Deployed & Verified — 0G Testnet (Chain ID 16602)
+
+| Contract | Address | Explorer |
+|----------|---------|---------|
+| `PQCKeyRegistry` | [`0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027`](https://chainscan-galileo.0g.ai/address/0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027) | [View](https://chainscan-galileo.0g.ai/address/0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027) |
+| `AgentRegistry` | [`0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0`](https://chainscan-galileo.0g.ai/address/0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0) | [View](https://chainscan-galileo.0g.ai/address/0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0) |
+
+`AgentRegistry` is deployed with `PQCKeyRegistry` as its constructor argument, enforcing that every agent owner must have on-chain PQC key registration.
+
+---
+
 ### `PQCKeyRegistry`
 Stores Dilithium3 and Kyber-1024 public key fingerprints per wallet address.
 

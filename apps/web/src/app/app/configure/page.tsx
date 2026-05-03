@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Btn, Card, Toggle } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
+import { optimizePortfolio } from '@/lib/quantum/client';
 
 const RISKS = [
   { id: 'conservative', label: 'Conservative', desc: 'Lower volatility, priority on capital preservation', icon: '🛡' },
@@ -92,6 +93,7 @@ export default function ConfigurePage() {
   const [maxDrawdown, setMaxDrawdown] = useState(15);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [optimizing, setOptimizing] = useState(false);
 
   const toggleAsset = (sym: string) => {
     setSelectedAssets(prev =>
@@ -107,9 +109,10 @@ export default function ConfigurePage() {
     return Object.keys(e).length === 0;
   };
 
-  const next = () => {
+  const next = async () => {
     if (!validate()) return;
     if (wizStep < 2) { setWizStep(s => s + 1); return; }
+
     const config: Partial<AgentConfig> = {
       riskLevel: risk as AgentConfig['riskLevel'],
       assets: selectedAssets,
@@ -120,6 +123,17 @@ export default function ConfigurePage() {
       driftThreshold: 5,
     };
     sessionStorage.setItem('spike_agent_config', JSON.stringify(config));
+
+    setOptimizing(true);
+    try {
+      const riskTolerance = risk === 'conservative' ? 0.3 : risk === 'aggressive' ? 0.7 : 0.5;
+      const result = await optimizePortfolio(selectedAssets, riskTolerance);
+      sessionStorage.setItem('spike_optimization_result', JSON.stringify(result));
+    } catch {
+      // Non-critical — proceed without quantum result
+      sessionStorage.removeItem('spike_optimization_result');
+    }
+    setOptimizing(false);
     router.push('/app/review');
   };
 
@@ -241,7 +255,14 @@ export default function ConfigurePage() {
         ) : <div />}
         <div style={{ display: 'flex', gap: 10 }}>
           {wizStep > 0 && <Btn variant="ghost" onClick={() => setWizStep(s => s - 1)}>← Back</Btn>}
-          <Btn onClick={next}>{wizStep === 2 ? 'Preview Strategy →' : 'Next →'}</Btn>
+          <Btn onClick={next} style={{ minWidth: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {optimizing ? (
+              <>
+                <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#FBF7F0', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+                Optimizing…
+              </>
+            ) : wizStep === 2 ? 'Preview Strategy →' : 'Next →'}
+          </Btn>
         </div>
       </div>
     </div>

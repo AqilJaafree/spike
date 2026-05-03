@@ -1,12 +1,5 @@
 import numpy as np
 from scipy.optimize import minimize
-from qiskit_algorithms import SamplingVQE, QAOA
-from qiskit_algorithms.optimizers import COBYLA
-from qiskit_optimization import QuadraticProgram
-from qiskit_optimization.converters import QuadraticProgramToQubo
-from qiskit_optimization.algorithms import MinimumEigenOptimizer
-from qiskit.primitives import StatevectorSampler
-from app.services.ibm_runtime import get_simulator
 
 
 async def run_portfolio_optimization(

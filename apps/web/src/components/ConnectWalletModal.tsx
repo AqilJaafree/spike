@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useConnect } from 'wagmi';
+import { useConnect, useSwitchChain, useAccount } from 'wagmi';
 import { Icons } from './ui/icons';
+import { zgTestnet } from '@/lib/wagmi/config';
 
 interface Props {
   open: boolean;
@@ -50,7 +51,10 @@ function WalletRow({ wallet, connecting, onConnect }: {
 
 export function ConnectWalletModal({ open, onClose, onConnected }: Props) {
   const { connect, connectors, isPending, error } = useConnect();
+  const { switchChain } = useSwitchChain();
+  const { address: currentAddress, connector: currentConnector, isConnected } = useAccount();
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   if (!open) return null;
 
@@ -62,22 +66,41 @@ export function ConnectWalletModal({ open, onClose, onConnected }: Props) {
 
   const handleConnect = (id: string) => {
     setConnecting(id);
+    setLocalError(null);
     const connector = connectors.find(c => c.id === id || c.name.toLowerCase().includes(id.toLowerCase().replace('sdk', '')));
-    if (connector) {
-      connect({ connector }, {
-        onSuccess: (data) => {
-          setConnecting(null);
-          onConnected(data.accounts[0] ?? '0x3f4B...e91C');
-        },
-        onError: () => setConnecting(null),
-      });
-    } else {
-      // Simulate for dev/demo when connector not found
-      setTimeout(() => {
-        setConnecting(null);
-        onConnected('0x3f4B...e91C');
-      }, 1200);
+    if (!connector) {
+      setConnecting(null);
+      setLocalError('Wallet not detected. Please install the extension and refresh.');
+      return;
     }
+
+    // Already connected with this same connector — reuse the session
+    if (isConnected && currentAddress && currentConnector?.id === connector.id) {
+      setConnecting(null);
+      switchChain({ chainId: zgTestnet.id });
+      onConnected(currentAddress);
+      return;
+    }
+
+    connect({ connector, chainId: zgTestnet.id }, {
+      onSuccess: (data) => {
+        setConnecting(null);
+        if (data.accounts[0]) {
+          switchChain({ chainId: zgTestnet.id });
+          onConnected(data.accounts[0]);
+        }
+      },
+      onError: (err) => {
+        setConnecting(null);
+        // Wagmi throws "already connected" if a session was restored — recover gracefully
+        if (err.message.toLowerCase().includes('already connected') && currentAddress) {
+          switchChain({ chainId: zgTestnet.id });
+          onConnected(currentAddress);
+        } else {
+          setLocalError(err.message);
+        }
+      },
+    });
   };
 
   return (
@@ -107,13 +130,13 @@ export function ConnectWalletModal({ open, onClose, onConnected }: Props) {
           ))}
         </div>
 
-        {error && (
+        {(error || localError) && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
             background: '#f8d7da', borderRadius: 12, padding: '10px 14px',
             fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#842029', marginBottom: 12,
           }}>
-            <Icons.AlertTriangle />{error.message}
+            <Icons.AlertTriangle />{localError ?? error?.message}
           </div>
         )}
 

@@ -9,8 +9,14 @@ import { Icons } from './ui/icons';
 
 const STEPS = ['Generate', 'Derive', 'Register', 'Confirm'] as const;
 
+interface EncryptedData {
+  encryptedBundle: ArrayBuffer;
+  iv: Uint8Array;
+  encapsulatedKey: Uint8Array;
+}
+
 interface Props {
-  onComplete: (bundle: PQCKeyBundle, dilithiumFp: string, kyberFp: string) => void;
+  onComplete: (bundle: PQCKeyBundle, dilithiumFp: string, kyberFp: string, encryptedData?: EncryptedData) => void;
 }
 
 export function PQCKeygenOverlay({ onComplete }: Props) {
@@ -19,6 +25,7 @@ export function PQCKeygenOverlay({ onComplete }: Props) {
   const [fingerprint, setFingerprint] = useState('');
   const [done, setDone] = useState(false);
   const [bundle, setBundle] = useState<PQCKeyBundle | null>(null);
+  const [encryptedData, setEncryptedData] = useState<EncryptedData | null>(null);
   const { signMessageAsync } = useSignMessage();
 
   useEffect(() => { runKeygen(); }, []);
@@ -37,6 +44,7 @@ export function PQCKeygenOverlay({ onComplete }: Props) {
       const fp = `dlth3:${result.bundle.dilithium.fingerprint.slice(0, 4)}·${result.bundle.dilithium.fingerprint.slice(4, 8)}·${result.bundle.dilithium.fingerprint.slice(8, 12)}·${result.bundle.dilithium.fingerprint.slice(-12, -8)}·${result.bundle.dilithium.fingerprint.slice(-8, -4)}·${result.bundle.dilithium.fingerprint.slice(-4)}`;
       setFingerprint(fp);
       setBundle(result.bundle);
+      setEncryptedData({ encryptedBundle: result.encryptedBundle, iv: result.iv, encapsulatedKey: result.encapsulatedKey });
 
       setStep(3); setProgress(100);
       setTimeout(() => {
@@ -55,7 +63,7 @@ export function PQCKeygenOverlay({ onComplete }: Props) {
 
   const handleContinue = () => {
     if (bundle) {
-      onComplete(bundle, bundle.dilithium.fingerprint, bundle.kyber.fingerprint);
+      onComplete(bundle, bundle.dilithium.fingerprint, bundle.kyber.fingerprint, encryptedData ?? undefined);
     } else {
       onComplete({} as PQCKeyBundle, fingerprint, fingerprint);
     }

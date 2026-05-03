@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from app.main import app
 
 
@@ -17,7 +17,7 @@ def sample_portfolio():
 
 @pytest.mark.asyncio
 async def test_optimize_returns_valid_weights(sample_portfolio):
-    async with AsyncClient(app=app, base_url='http://test') as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
         resp = await client.post('/optimize', json={
             **sample_portfolio,
             'risk_tolerance': 0.5,
@@ -35,7 +35,7 @@ async def test_optimize_returns_valid_weights(sample_portfolio):
 
 @pytest.mark.asyncio
 async def test_optimize_weights_within_bounds(sample_portfolio):
-    async with AsyncClient(app=app, base_url='http://test') as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
         resp = await client.post('/optimize', json={
             **sample_portfolio,
             'risk_tolerance': 0.3,
@@ -50,7 +50,7 @@ async def test_optimize_weights_within_bounds(sample_portfolio):
 
 @pytest.mark.asyncio
 async def test_health():
-    async with AsyncClient(app=app, base_url='http://test') as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
         resp = await client.get('/health')
     assert resp.status_code == 200
     assert resp.json()['status'] == 'ok'

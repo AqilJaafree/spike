@@ -50,6 +50,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.40.0
         version: 5.100.8(react@19.2.5)
+      '@wagmi/core':
+        specifier: ^2.13.0
+        version: 2.22.1(@tanstack/query-core@5.100.8)(@types/react@19.2.14)(immer@10.0.2)(react@19.2.5)(typescript@5.9.3)(use-sync-external-store@1.4.0(react@19.2.5))(viem@2.48.8(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
       autoprefixer:
         specifier: ^10.4.19
         version: 10.5.0(postcss@8.5.13)

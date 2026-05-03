@@ -1,0 +1,50 @@
+[build]
+  base    = "."
+  command = "pnpm turbo run build --filter=@spike/web..."
+  publish = "apps/web/out"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Pre-filled public values — no secrets here
+  NEXT_PUBLIC_PQC_KEY_REGISTRY = "0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027"
+  NEXT_PUBLIC_AGENT_REGISTRY   = "0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0"
+  NEXT_PUBLIC_ZG_NETWORK       = "testnet"
+
+# Serve WebAssembly with the correct content-type
+[[headers]]
+  for = "/*.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+    Cross-Origin-Opener-Policy   = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+# Direct-URL navigation — serve each page's own index.html
+[[redirects]]
+  from   = "/app/configure"
+  to     = "/app/configure/index.html"
+  status = 200
+
+[[redirects]]
+  from   = "/app/review"
+  to     = "/app/review/index.html"
+  status = 200
+
+[[redirects]]
+  from   = "/app/dashboard"
+  to     = "/app/dashboard/index.html"
+  status = 200
+
+[[redirects]]
+  from   = "/app/setup"
+  to     = "/app/setup/index.html"
+  status = 200
+
+[[redirects]]
+  from   = "/app/settings"
+  to     = "/app/settings/index.html"
+  status = 200
+
+[[redirects]]
+  from   = "/app"
+  to     = "/app/index.html"
+  status = 200

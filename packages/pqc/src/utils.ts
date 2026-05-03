@@ -9,7 +9,7 @@ export function keccak256Fingerprint(publicKey: Uint8Array): string {
 export async function deriveWalletSeed(signedNonce: Uint8Array): Promise<Uint8Array> {
   const baseKey = await crypto.subtle.importKey('raw', ab(signedNonce), 'HKDF', false, ['deriveKey', 'deriveBits']);
   const bits = await crypto.subtle.deriveBits(
-    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode('spike-pqc-v1') },
+    { name: 'HKDF', hash: 'SHA-256', salt: new TextEncoder().encode('spike-pqc-salt-v1'), info: new TextEncoder().encode('spike-pqc-v1') },
     baseKey,
     256
   );

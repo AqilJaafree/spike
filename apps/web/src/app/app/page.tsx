@@ -31,10 +31,24 @@ export default function AppPage() {
     setTimeout(() => setPhase('pqc'), 400);
   }
 
-  function handlePQCComplete(_bundle: PQCKeyBundle, dilithiumFp: string, kyberFp: string) {
+  function handlePQCComplete(
+    _bundle: PQCKeyBundle,
+    dilithiumFp: string,
+    kyberFp: string,
+    encryptedData?: { encryptedBundle: ArrayBuffer; iv: Uint8Array; encapsulatedKey: Uint8Array }
+  ) {
     sessionStorage.setItem('spike_dilithium_fp', dilithiumFp);
     sessionStorage.setItem('spike_kyber_fp', kyberFp);
     sessionStorage.setItem('spike_pqc_active', '1');
+    if (encryptedData) {
+      const toB64 = (buf: ArrayBuffer | Uint8Array) => {
+        const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+        return btoa(String.fromCharCode(...Array.from(bytes)));
+      };
+      sessionStorage.setItem('spike_enc_bundle', toB64(encryptedData.encryptedBundle));
+      sessionStorage.setItem('spike_enc_iv', toB64(encryptedData.iv));
+      sessionStorage.setItem('spike_enc_key', toB64(encryptedData.encapsulatedKey));
+    }
     router.push('/app/configure');
   }
 

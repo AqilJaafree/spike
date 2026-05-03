@@ -32,23 +32,23 @@ async def run_risk_simulation(
 
 
 def _run_qae(mu, sigma, min_val, max_val, num_qubits) -> tuple[float, float]:
-    dist = LogNormalDistribution(
-        num_qubits=num_qubits,
-        mu=mu,
-        sigma=sigma,
-        bounds=(min_val, max_val),
-    )
-    sampler = StatevectorSampler()
-    iae = IterativeAmplitudeEstimation(epsilon_target=0.01, alpha=0.05, sampler=sampler)
-    problem = EstimationProblem(state_preparation=dist, objective_qubits=[num_qubits - 1])
-
     try:
+        dist = LogNormalDistribution(
+            num_qubits=num_qubits,
+            mu=mu,
+            sigma=sigma,
+            bounds=(min_val, max_val),
+        )
+        sampler = StatevectorSampler()
+        iae = IterativeAmplitudeEstimation(epsilon_target=0.01, alpha=0.05, sampler=sampler)
+        problem = EstimationProblem(state_preparation=dist, objective_qubits=[num_qubits - 1])
         result = iae.estimate(problem)
         var_95 = round(float(result.estimation), 6)
     except Exception:
         var_95 = _monte_carlo_var(mu, sigma)
 
-    cvar_99 = round(var_95 * 1.25, 6)
+    # CVaR at 99% is expected portfolio value in worst 1% tail — lower than the 5th-percentile VaR
+    cvar_99 = round(var_95 * 0.80, 6)
     return var_95, cvar_99
 
 

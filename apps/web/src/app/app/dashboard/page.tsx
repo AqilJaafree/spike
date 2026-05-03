@@ -2,9 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAccount, useWriteContract } from 'wagmi';
+import { waitForTransactionReceipt } from '@wagmi/core';
 import { Btn, Card, SectionLabel, StatusPill, Toast } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
+import { wagmiConfig } from '@/lib/wagmi/config';
+import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI } from '@/lib/contracts';
+import { pauseAgent, resumeAgent } from '@/lib/agent/client';
 
 interface Agent {
   id: number;
@@ -47,6 +52,9 @@ function donutPaths(allocations: typeof ALLOCATIONS) {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { address } = useAccount();
+  const { writeContractAsync } = useWriteContract();
+
   const [agentStatus, setAgentStatus] = useState<'running' | 'paused'>('running');
   const [period, setPeriod] = useState('30d');
   const [showConfirm, setShowConfirm] = useState(false);
@@ -55,14 +63,15 @@ export default function DashboardPage() {
     { id: 0, name: 'Agent 1', risk: 'balanced', status: 'running', value: '$24,831' },
   ]);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'success' as 'success' | 'error' });
 
   useEffect(() => {
     setWalletAddress(sessionStorage.getItem('spike_wallet'));
   }, []);
 
-  const showToast = (message: string) => {
-    setToast({ visible: true, message, type: 'success' });
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ visible: true, message, type });
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 4000);
   };
 
@@ -87,9 +96,58 @@ export default function DashboardPage() {
 
   const slices = donutPaths(ALLOCATIONS);
 
+  const getAgentId = (): number => parseInt(sessionStorage.getItem('spike_agent_id') ?? '1', 10);
+
   const handlePauseResume = () => {
     if (agentStatus === 'running') setShowConfirm(true);
-    else { setAgentStatus('running'); showToast('Bot resumed'); }
+    else handleResume();
+  };
+
+  const handleResume = async () => {
+    const agentId = getAgentId();
+    setActionLoading(true);
+    try {
+      await resumeAgent(agentId).catch(() => null); // non-critical if service down
+      if (address && AGENT_REGISTRY_ADDRESS) {
+        const hash = await writeContractAsync({
+          address: AGENT_REGISTRY_ADDRESS,
+          abi: AGENT_REGISTRY_ABI,
+          functionName: 'resumeAgent',
+          args: [BigInt(agentId)],
+        });
+        await waitForTransactionReceipt(wagmiConfig, { hash });
+      }
+      setAgentStatus('running');
+      showToast('Bot resumed');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to resume', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleConfirmPause = async () => {
+    const agentId = getAgentId();
+    setShowConfirm(false);
+    setActionLoading(true);
+    try {
+      await pauseAgent(agentId).catch(() => null); // non-critical if service down
+      if (address && AGENT_REGISTRY_ADDRESS) {
+        const hash = await writeContractAsync({
+          address: AGENT_REGISTRY_ADDRESS,
+          abi: AGENT_REGISTRY_ABI,
+          functionName: 'pauseAgent',
+          args: [BigInt(agentId)],
+        });
+        await waitForTransactionReceipt(wagmiConfig, { hash });
+      }
+      setAgentStatus('paused');
+      showToast('Bot paused');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to pause', 'error');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const addAgent = () => {
@@ -166,9 +224,12 @@ export default function DashboardPage() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Btn variant="ghost" size="sm" onClick={() => router.push('/app/configure')}>Change strategy</Btn>
             <Btn variant={agentStatus === 'running' ? 'sage' : 'primary'} size="sm"
-              icon={agentStatus === 'running' ? <Icons.Pause /> : <Icons.Play />}
-              onClick={handlePauseResume}>
-              {agentStatus === 'running' ? 'Pause bot' : 'Resume bot'}
+              icon={actionLoading ? undefined : agentStatus === 'running' ? <Icons.Pause /> : <Icons.Play />}
+              onClick={handlePauseResume}
+              style={{ minWidth: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {actionLoading ? (
+                <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(85,85,85,0.3)', borderTopColor: '#555555', animation: 'spin 0.8s linear infinite' }} />
+              ) : agentStatus === 'running' ? 'Pause bot' : 'Resume bot'}
             </Btn>
           </div>
         </div>
@@ -295,7 +356,7 @@ export default function DashboardPage() {
             <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 24, lineHeight: 1.7 }}>Your bot will stop all automatic trades. Your funds stay in place and you can resume any time.</div>
             <div style={{ display: 'flex', gap: 10 }}>
               <Btn variant="ghost" style={{ flex: 1 }} onClick={() => setShowConfirm(false)}>Cancel</Btn>
-              <Btn style={{ flex: 1 }} onClick={() => { setAgentStatus('paused'); setShowConfirm(false); showToast('Bot paused'); }}>Pause Bot</Btn>
+              <Btn style={{ flex: 1 }} onClick={handleConfirmPause}>Pause Bot</Btn>
             </div>
           </div>
         </div>

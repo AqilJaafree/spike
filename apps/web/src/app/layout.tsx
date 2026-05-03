@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { DM_Sans, DM_Mono } from 'next/font/google';
-import { Web3Provider } from '@/lib/wagmi/provider';
+import { ClientProviders } from '@/components/ClientProviders';
 import './globals.css';
 
 const dmSans = DM_Sans({
@@ -22,9 +22,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${dmSans.variable} ${dmMono.variable} antialiased`}
-        style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", background: '#FBF7F0', color: '#555555' }}>
-        <Web3Provider>{children}</Web3Provider>
+      <body
+        className={`${dmSans.variable} ${dmMono.variable} antialiased`}
+        style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", background: '#FBF7F0', color: '#555555' }}
+        suppressHydrationWarning
+      >
+        <ClientProviders>{children}</ClientProviders>
       </body>
     </html>
   );

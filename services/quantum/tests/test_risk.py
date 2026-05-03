@@ -1,11 +1,11 @@
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from app.main import app
 
 
 @pytest.mark.asyncio
 async def test_risk_returns_var_cvar():
-    async with AsyncClient(app=app, base_url='http://test') as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
         resp = await client.post('/risk', json={
             'portfolio_mu': 0.05,
             'portfolio_sigma': 0.15,
@@ -23,7 +23,7 @@ async def test_risk_returns_var_cvar():
 
 @pytest.mark.asyncio
 async def test_risk_cvar_greater_than_var():
-    async with AsyncClient(app=app, base_url='http://test') as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
         resp = await client.post('/risk', json={
             'portfolio_mu': 0.03,
             'portfolio_sigma': 0.20,
