@@ -79,13 +79,60 @@ export async function getQPUCache(portfolioHash: string): Promise<QPUResult | nu
   }
 }
 
-export async function appendAuditLog(entry: AuditEntry): Promise<void> {
-  // Best-effort write to 0G KV
+/**
+ * Appends an audit entry to 0G Storage (immutable blob) and 0G KV (indexed lookup).
+ * Returns the 0G Storage root hash as an on-chain-verifiable audit proof, or null
+ * if the signer is not provided / Storage is unreachable (KV write still attempted).
+ */
+export async function appendAuditLog(entry: AuditEntry, signer?: Signer): Promise<string | null> {
+  const encoded = new TextEncoder().encode(JSON.stringify(entry));
+  let storageRoot: string | null = null;
+
+  // Primary: upload to 0G Storage for immutable, content-addressed audit record
+  if (signer) {
+    try {
+      const ref = await uploadBytes(encoded, signer);
+      storageRoot = ref.rootHash;
+    } catch {
+      // Storage unavailable — fall through to KV-only
+    }
+  }
+
+  // Secondary: write to 0G KV for fast indexed lookups per agent
   try {
     const kv = new KvClient(KV_URL);
     const streamId = NS_AUDIT + entry.agentId;
     const key = new TextEncoder().encode(`${entry.agentId}:${entry.timestamp}`);
-    const value = new TextEncoder().encode(JSON.stringify(entry));
-    await (kv as any).set(streamId, key, value);
-  } catch { /* Audit log is non-critical — agent continues */ }
+    const payload = storageRoot
+      ? new TextEncoder().encode(JSON.stringify({ ...entry, storageRoot }))
+      : encoded;
+    await (kv as any).set(streamId, key, payload);
+  } catch {
+    // KV unavailable — Storage root hash (if obtained) is still the audit proof
+  }
+
+  return storageRoot;
+}
+
+/**
+ * Reads the most recent audit log entries for an agent from 0G KV.
+ */
+export async function getAuditLog(agentId: number, limit = 50): Promise<AuditEntry[]> {
+  try {
+    const kv = new KvClient(KV_URL);
+    const streamId = NS_AUDIT + agentId;
+    // List keys for this agent's stream and decode each value
+    const entries: AuditEntry[] = [];
+    const keyPrefix = new TextEncoder().encode(`${agentId}:`);
+    const rawEntries = await (kv as any).listEntries(streamId, keyPrefix, false, limit) as
+      Array<{ key: Uint8Array; data: string }>;
+    for (const raw of rawEntries ?? []) {
+      try {
+        entries.push(JSON.parse(Buffer.from(raw.data, 'base64').toString('utf8')) as AuditEntry);
+      } catch { /* skip malformed entry */ }
+    }
+    return entries.sort((a, b) => b.timestamp - a.timestamp);
+  } catch {
+    return [];
+  }
 }

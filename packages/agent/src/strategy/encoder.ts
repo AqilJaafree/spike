@@ -1,8 +1,7 @@
-import type { AgentConfig } from '@spike/0g-client';
-import { kyberEncrypt } from '@spike/pqc';
-import { uploadBytes } from '@spike/0g-client';
+import type { AgentConfig, StorageRef } from '@spike/0g-client';
+import { kyberEncrypt, kyberDecrypt } from '@spike/pqc';
+import { uploadBytes, downloadBytes } from '@spike/0g-client';
 import type { ethers } from 'ethers';
-import type { StorageRef } from '@spike/0g-client';
 
 export async function encryptAndStoreConfig(
   config: AgentConfig,
@@ -28,4 +27,28 @@ export async function encryptAndStoreConfig(
 
   const storageRef = await uploadBytes(bundle, signer);
   return { storageRef, configRoot: storageRef.rootHash };
+}
+
+/**
+ * Downloads an encrypted config bundle from 0G Storage and decrypts it with
+ * the Kyber-1024 private key. Mirrors encryptAndStoreConfig — same wire format.
+ */
+export async function downloadAndDecryptConfig(
+  rootHash: string,
+  kyberPrivateKey: Uint8Array
+): Promise<AgentConfig> {
+  const bundle = await downloadBytes(rootHash);
+  const view = new DataView(bundle.buffer, bundle.byteOffset, bundle.byteLength);
+  let offset = 0;
+
+  const ivLen = view.getUint32(offset); offset += 4;
+  const iv = bundle.slice(offset, offset + ivLen); offset += ivLen;
+
+  const kemLen = view.getUint32(offset); offset += 4;
+  const encapsulatedKey = bundle.slice(offset, offset + kemLen); offset += kemLen;
+
+  const ciphertext = bundle.slice(offset);
+
+  const plaintext = await kyberDecrypt(kyberPrivateKey, encapsulatedKey, ciphertext, iv);
+  return JSON.parse(new TextDecoder().decode(plaintext)) as AgentConfig;
 }

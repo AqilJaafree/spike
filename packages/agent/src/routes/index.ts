@@ -1,8 +1,29 @@
 import { Router, type Router as ExpressRouter } from 'express';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { z } from 'zod';
 
-// In-memory agent state store — replace with 0G KV in production
-const agents = new Map<number, { status: 'active' | 'paused'; config: unknown; lastAction?: string }>();
+type AgentState = { status: 'active' | 'paused'; config: unknown; lastAction?: string };
+
+// JSON file-backed persistence — survives process restarts
+const STATE_FILE = process.env.AGENT_STATE_FILE ?? './agents.json';
+
+function loadAgents(): Map<number, AgentState> {
+  if (!existsSync(STATE_FILE)) return new Map();
+  try {
+    const obj = JSON.parse(readFileSync(STATE_FILE, 'utf8')) as Record<string, AgentState>;
+    return new Map(Object.entries(obj).map(([k, v]) => [Number(k), v]));
+  } catch {
+    return new Map();
+  }
+}
+
+function persist(agents: Map<number, AgentState>): void {
+  try {
+    writeFileSync(STATE_FILE, JSON.stringify(Object.fromEntries(agents.entries()), null, 2));
+  } catch { /* non-critical — state stays in memory */ }
+}
+
+const agents = loadAgents();
 
 export const router: ExpressRouter = Router();
 
@@ -22,6 +43,8 @@ router.post('/pause/:agentId', (req, res) => {
   const agent = agents.get(id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
   agent.status = 'paused';
+  agent.lastAction = new Date().toISOString();
+  persist(agents);
   res.json({ success: true });
 });
 
@@ -30,6 +53,8 @@ router.post('/resume/:agentId', (req, res) => {
   const agent = agents.get(id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
   agent.status = 'active';
+  agent.lastAction = new Date().toISOString();
+  persist(agents);
   res.json({ success: true });
 });
 
@@ -50,6 +75,7 @@ router.post('/register', (req, res) => {
   const parsed = RegisterSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { agentId, config } = parsed.data;
-  agents.set(agentId, { status: 'active', config });
+  agents.set(agentId, { status: 'active', config, lastAction: new Date().toISOString() });
+  persist(agents);
   res.json({ success: true, agentId });
 });

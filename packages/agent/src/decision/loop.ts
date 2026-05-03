@@ -14,6 +14,8 @@ export interface DecisionLoopDeps {
   getCurrentWeights: () => Promise<Record<string, number>>;
   executeRebalance: (trades: ReturnType<typeof getRebalanceTrades> extends Promise<infer T> ? T : never) => Promise<string>;
   getAttestationId: () => Promise<string>;
+  /** Optional: records the action hash + tx hash on-chain via AgentRegistry.recordAction */
+  recordActionOnChain?: (actionHash: string, txHash: string) => Promise<void>;
 }
 
 export async function runDecisionCycle(
@@ -65,5 +67,15 @@ export async function runDecisionCycle(
     details: { regime, sharpe: qpuResult.sharpe, var95: risk.var95, tradesCount: trades.length },
   };
 
-  await appendAuditLog(entry);
+  // Write to 0G Storage (immutable) + 0G KV (indexed) — returns Storage root hash as audit proof
+  const auditRoot = await appendAuditLog(entry, deps.signer);
+
+  // Record on-chain so the action hash is verifiable via AgentRegistry
+  if (deps.recordActionOnChain) {
+    await deps.recordActionOnChain(actionHash, txHash).catch(() => null);
+  }
+
+  if (auditRoot) {
+    console.log(`[agent:${deps.agentId}] action recorded — 0G Storage root: ${auditRoot}`);
+  }
 }

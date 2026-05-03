@@ -6,6 +6,7 @@ export {
   storeQPUCache,
   getQPUCache,
   appendAuditLog,
+  getAuditLog,
 } from './storage/client.js';
 
 export {
