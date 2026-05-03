@@ -1,5 +1,5 @@
 import type { ethers } from 'ethers';
-import type { AgentConfig, QPUResult, RiskMetrics, AuditEntry } from '@spike/0g-client';
+import type { AgentConfig, AuditEntry } from '@spike/0g-client';
 import { appendAuditLog, inferMarketRegime } from '@spike/0g-client';
 import { dilithiumSign } from '@spike/pqc';
 import { getOptimalWeights, getRebalanceTrades, getRiskMetrics } from '../quantum/client.js';
@@ -47,7 +47,7 @@ export async function runDecisionCycle(
 
   // Sign the rebalance decision with Dilithium3
   const decisionPayload = new TextEncoder().encode(JSON.stringify({ trades, qpuResult, regime }));
-  const { signature } = await dilithiumSign(deps.dilithiumSecretKey, decisionPayload);
+  dilithiumSign(deps.dilithiumSecretKey, decisionPayload);
 
   const txHash = await deps.executeRebalance(trades);
   const attestationId = await deps.getAttestationId();

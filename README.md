@@ -191,8 +191,8 @@ This starts (in parallel via Turborepo):
 
 | Contract | Address | Explorer |
 |----------|---------|---------|
-| `PQCKeyRegistry` | [`0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027`](https://chainscan-galileo.0g.ai/address/0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027) | [View](https://chainscan-galileo.0g.ai/address/0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027) |
-| `AgentRegistry` | [`0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0`](https://chainscan-galileo.0g.ai/address/0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0) | [View](https://chainscan-galileo.0g.ai/address/0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0) |
+| `PQCKeyRegistry` | [`0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027`](https://explorer.0g.ai/testnet/blockchain/accounts/0x300fa0af86201a410bebd511ca7fb81548a0f027/transactions) | [View](https://explorer.0g.ai/testnet/blockchain/accounts/0x300fa0af86201a410bebd511ca7fb81548a0f027/transactions) |
+| `AgentRegistry` | [`0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0`](https://explorer.0g.ai/testnet/blockchain/accounts/0x5bbe9d2735eefdF453f71fe3f2bcd3e1cb8cb8b0/transactions) | [View](https://explorer.0g.ai/testnet/blockchain/accounts/0x5bbe9d2735eefdF453f71fe3f2bcd3e1cb8cb8b0/transactions) |
 
 `AgentRegistry` is deployed with `PQCKeyRegistry` as its constructor argument, enforcing that every agent owner must have on-chain PQC key registration.
 
