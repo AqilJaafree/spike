@@ -31,7 +31,7 @@ export const AGENT_REGISTRY_ABI = [
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'configRoot', type: 'bytes32' },
-      { name: 'dilithiumSig', type: 'bytes32' },
+      { name: 'actionSigFingerprint', type: 'bytes32' },
       { name: 'attestationId', type: 'bytes32' },
     ],
     outputs: [{ name: 'agentId', type: 'uint256' }],

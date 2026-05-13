@@ -15,6 +15,20 @@ export {
   inferMarketRegime,
 } from './compute/client.js';
 
+export {
+  submitMlDsaVerifyToTee,
+  isTeeVerifyAvailable,
+} from './compute/mldsaVerify.js';
+
+export {
+  uploadSkill,
+  fetchSkill,
+  parseSkillFrontmatter,
+  computeSkillKey,
+} from './skills.js';
+
+export type { SkillMeta } from './skills.js';
+
 export type {
   AgentConfig,
   QPUResult,
@@ -22,6 +36,7 @@ export type {
   TradeAction,
   AuditEntry,
   StorageRef,
+  TeeVerifyResult,
   RiskLevel,
   RebalanceFrequency,
   MarketRegime,

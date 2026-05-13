@@ -55,4 +55,36 @@ describe('PQCKeyRegistry', () => {
     await registry.revoke();
     expect(await registry.isRegistered(owner.address)).to.be.false;
   });
+
+  // ── additional edge cases ─────────────────────────────────────────────────
+
+  it('reverts rotate when not registered', async () => {
+    await expect(registry.rotate(dilithiumFp, kyberFp, storageRoot))
+      .to.be.revertedWithCustomError(registry, 'NotRegistered');
+  });
+
+  it('reverts revoke when not registered', async () => {
+    await expect(registry.revoke())
+      .to.be.revertedWithCustomError(registry, 'NotRegistered');
+  });
+
+  it('returns zero-struct for unregistered wallet', async () => {
+    const keys = await registry.getKeys(other.address);
+    expect(keys.dilithiumFingerprint).to.equal(ethers.ZeroHash);
+    expect(keys.active).to.be.false;
+  });
+
+  it('revoked key blocks agent deployment', async () => {
+    // Register, revoke, then attempt to deploy via a separate AgentRegistry
+    await registry.register(dilithiumFp, kyberFp, storageRoot);
+    await registry.revoke();
+
+    const AgentReg = await ethers.getContractFactory('AgentRegistry');
+    const agentRegistry = await AgentReg.deploy(await registry.getAddress(), ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress);
+    const configRoot = ethers.keccak256(ethers.toUtf8Bytes('config'));
+    const sigFp = ethers.keccak256(ethers.toUtf8Bytes('sig'));
+    await expect(
+      agentRegistry.deployAgent(configRoot, sigFp, ethers.ZeroHash, ethers.ZeroHash)
+    ).to.be.revertedWithCustomError(agentRegistry, 'PQCKeyNotRegistered');
+  });
 });

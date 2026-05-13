@@ -5,14 +5,15 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "deploy:testnet": "hardhat run scripts/deploy.ts --network zg-testnet",
-    "deploy:mainnet": "hardhat run scripts/deploy.ts --network zg-mainnet",
-    "verify": "hardhat verify --network zg-testnet"
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy.ts --network mainnet",
+    "verify": "hardhat verify --network testnet"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.0",
     "@typechain/hardhat": "^9.0.0",
+    "@noble/post-quantum": "^0.6.0",
     "hardhat": "^2.22.0",
     "typechain": "^8.3.0",
     "ts-node": "^10.9.0",

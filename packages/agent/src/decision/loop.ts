@@ -1,7 +1,7 @@
 import type { ethers } from 'ethers';
 import type { AgentConfig, AuditEntry } from '@spike/0g-client';
 import { appendAuditLog, inferMarketRegime } from '@spike/0g-client';
-import { dilithiumSign } from '@spike/pqc';
+import { signAction } from '@spike/pqc';
 import { getOptimalWeights, getRebalanceTrades, getRiskMetrics } from '../quantum/client.js';
 import { createHash } from 'crypto';
 
@@ -9,6 +9,8 @@ export interface DecisionLoopDeps {
   signer: ethers.Signer;
   agentId: number;
   dilithiumSecretKey: Uint8Array;
+  /** AgentRegistry contract address — included in signing envelope to prevent cross-contract replay. */
+  agentRegistryAddress?: `0x${string}`;
   getPrices: () => Promise<Record<string, number>>;
   getReturns: () => Promise<{ returns: number[][]; covariance: number[][] }>;
   getCurrentWeights: () => Promise<Record<string, number>>;
@@ -45,9 +47,18 @@ export async function runDecisionCycle(
   const trades = await getRebalanceTrades(currentWeights, qpuResult.weights, prices);
   const risk = await getRiskMetrics(0.05, 0.15, 0.5, 2.0);
 
-  // Sign the rebalance decision with Dilithium3
+  // Sign the rebalance decision with a replay-safe ML-DSA envelope before execution
   const decisionPayload = new TextEncoder().encode(JSON.stringify({ trades, qpuResult, regime }));
-  dilithiumSign(deps.dilithiumSecretKey, decisionPayload);
+  const decisionHash = `0x${createHash('sha256').update(decisionPayload).digest('hex')}` as `0x${string}`;
+  const network = await deps.signer.provider?.getNetwork();
+  const chainId = network?.chainId ?? 16602n;
+  const { signature: decisionSig } = signAction(deps.dilithiumSecretKey, {
+    chainId: BigInt(chainId),
+    contractAddress: deps.agentRegistryAddress ?? '0x0000000000000000000000000000000000000000',
+    nonce: BigInt(Date.now()),
+    actionHash: decisionHash,
+    actionType: 'rebalance',
+  });
 
   const txHash = await deps.executeRebalance(trades);
   const attestationId = await deps.getAttestationId();
@@ -64,7 +75,13 @@ export async function runDecisionCycle(
     actionHash,
     attested: !!attestationId,
     attestationId,
-    details: { regime, sharpe: qpuResult.sharpe, var95: risk.var95, tradesCount: trades.length },
+    details: {
+      regime,
+      sharpe: qpuResult.sharpe,
+      var95: risk.var95,
+      tradesCount: trades.length,
+      decisionSigHex: Buffer.from(decisionSig).toString('hex'),
+    },
   };
 
   // Write to 0G Storage (immutable) + 0G KV (indexed) — returns Storage root hash as audit proof

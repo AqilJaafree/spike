@@ -48,3 +48,13 @@ export interface StorageRef {
   rootHash: string;
   uploadedAt: number;
 }
+
+/** Result returned by submitMlDsaVerifyToTee after 0G Compute TeeML verification. */
+export interface TeeVerifyResult {
+  /** Whether the ML-DSA-65 signature was valid, as attested by the TEE. */
+  verified: boolean;
+  /** 0G Compute chatID / ZG-Res-Key — used as attestationId in TeeAttestationVerifier. */
+  attestationId: string;
+  /** 0G Compute provider address that produced this attestation. */
+  provider: string;
+}

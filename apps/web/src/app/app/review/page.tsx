@@ -8,6 +8,7 @@ import { Btn, Card, SectionLabel, Row } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
+import { keccak256, concat } from 'viem';
 import {
   PQC_REGISTRY_ADDRESS, AGENT_REGISTRY_ADDRESS,
   PQC_REGISTRY_ABI, AGENT_REGISTRY_ABI,
@@ -67,13 +68,13 @@ export default function ReviewPage() {
       const kyberFpB32 = fingerprintToBytes32(kyberFp || 'demo-kyber');
       await delay(500);
 
-      // Step 2 — sign with wallet
+      // Step 2 — sign with wallet; compute a keccak256 commitment of (configRoot ‖ walletSig)
+      // The full ECDSA signature lives off-chain; only the 32-byte commitment is stored on-chain.
       setDeployStep(1);
-      let dilithiumSigB32: `0x${string}` = ZERO_B32;
+      let actionSigFingerprintB32: `0x${string}` = ZERO_B32;
       if (address) {
         const sig = await signMessageAsync({ message: `Spike Agent: ${configRoot}` });
-        // Take first 32 bytes of signature as the on-chain sig slot
-        dilithiumSigB32 = (sig.slice(0, 66).padEnd(66, '0')) as `0x${string}`;
+        actionSigFingerprintB32 = keccak256(concat([configRoot, sig as `0x${string}`]));
       } else {
         await delay(600);
       }
@@ -110,7 +111,7 @@ export default function ReviewPage() {
           address: AGENT_REGISTRY_ADDRESS,
           abi: AGENT_REGISTRY_ABI,
           functionName: 'deployAgent',
-          args: [configRoot, dilithiumSigB32, ZERO_B32],
+          args: [configRoot, actionSigFingerprintB32, ZERO_B32],
         });
         const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: agentHash });
         const parsed = parseAgentIdFromReceipt(receipt);

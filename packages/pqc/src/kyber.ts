@@ -1,4 +1,4 @@
-import { ml_kem1024 } from '@noble/post-quantum/ml-kem';
+import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 import type { KyberKeypair, KyberEncryptResult } from './types.js';
 import { keccak256Fingerprint } from './utils.js';
 

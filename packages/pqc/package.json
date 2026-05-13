@@ -17,7 +17,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@noble/post-quantum": "^0.2.1",
+    "@noble/post-quantum": "^0.6.0",
     "viem": "^2.9.0"
   },
   "devDependencies": {
