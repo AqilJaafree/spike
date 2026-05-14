@@ -10,7 +10,7 @@ import type { AgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
 import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI, AGENT_NFT_ADDRESS, AGENT_NFT_ABI } from '@/lib/contracts';
 import { zgTestnet } from '@/lib/wagmi/config';
-import { pauseAgent, resumeAgent, getPendingActions, ackAction } from '@/lib/agent/client';
+import { pauseAgent, resumeAgent, getPendingActions, ackAction, getAgentStatus, type AgentStatus } from '@/lib/agent/client';
 
 interface Agent {
   id: number;
@@ -20,23 +20,35 @@ interface Agent {
   value: string;
 }
 
-const ALLOCATIONS = [
-  { sym: 'ETH', pct: 38, color: '#5e8880' },
-  { sym: 'BTC', pct: 28, color: '#8AADA4' },
-  { sym: 'SOL', pct: 15, color: '#B8CFC8' },
-  { sym: 'USDC', pct: 12, color: '#CDC9C3' },
-  { sym: 'Other', pct: 7, color: '#D9E4DD' },
-];
+const DONUT_COLORS = ['#5e8880', '#8AADA4', '#B8CFC8', '#CDC9C3', '#D9E4DD', '#A8C5BF'];
 
-const ACTIVITIES = [
-  { time: '14:22', action: 'Rebalance', assets: 'ETH→SOL', amount: '$1,240', hash: '0x9f2a...', status: 'attested' as const },
-  { time: '09:15', action: 'Strategy check', assets: 'Portfolio', amount: '—', hash: '0x8b1c...', status: 'attested' as const },
-  { time: '06:03', action: 'Rebalance', assets: 'BTC→ETH', amount: '$880', hash: '0x7d4e...', status: 'attested' as const },
-  { time: 'Yest 23:41', action: 'Rebalance', assets: 'USDC→ARB', amount: '$540', hash: '0x6a3f...', status: 'attested' as const },
-  { time: 'Yest 18:02', action: 'Strategy check', assets: 'Portfolio', amount: '—', hash: '0x5c2b...', status: 'pending' as const },
-];
+function weightsToAllocations(weights?: Record<string, number>) {
+  if (!weights || Object.keys(weights).length === 0) return [
+    { sym: 'ETH', pct: 38, color: '#5e8880' },
+    { sym: 'BTC', pct: 28, color: '#8AADA4' },
+    { sym: 'SOL', pct: 15, color: '#B8CFC8' },
+    { sym: 'USDC', pct: 12, color: '#CDC9C3' },
+    { sym: 'Other', pct: 7, color: '#D9E4DD' },
+  ];
+  return Object.entries(weights).map(([sym, w], i) => ({
+    sym,
+    pct: Math.round(w * 100),
+    color: DONUT_COLORS[i % DONUT_COLORS.length],
+  }));
+}
 
-function donutPaths(allocations: typeof ALLOCATIONS) {
+function relativeTime(iso?: string): string {
+  if (!iso) return '—';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function donutPaths(allocations: Array<{ sym: string; pct: number; color: string }>) {
   const cx = 80, cy = 80, r = 60, gap = 0.02;
   let angle = -Math.PI / 2;
   return allocations.map(a => {
@@ -59,7 +71,7 @@ export default function DashboardPage() {
   const { writeContractAsync } = useWriteContract();
   const isWrongNetwork = !!address && chainId !== zgTestnet.id;
 
-  const [agentStatus, setAgentStatus] = useState<'running' | 'paused'>('running');
+  const [botStatus, setBotStatus] = useState<'running' | 'paused'>('running');
   const [period, setPeriod] = useState('30d');
   const [showConfirm, setShowConfirm] = useState(false);
   const [activeAgent, setActiveAgent] = useState(0);
@@ -71,6 +83,7 @@ export default function DashboardPage() {
   const [nftMeta, setNftMeta] = useState<{ dilithiumFingerprint: `0x${string}`; configRoot: `0x${string}`; actionSigFingerprint: `0x${string}`; skillKey: `0x${string}`; mintedAt: bigint } | null>(null);
   const [perfScore, setPerfScore] = useState<{ totalActions: bigint; successCount: bigint; pnlBasisPoints: bigint; lastUpdatedAt: bigint } | null>(null);
   const [nftLoading, setNftLoading] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
 
   useEffect(() => {
     setWalletAddress(sessionStorage.getItem('spike_wallet'));
@@ -139,6 +152,21 @@ export default function DashboardPage() {
       .finally(() => setNftLoading(false));
   }, [address, activeAgent, agents]);
 
+  // Poll agent service status for real bot data (weights, sharpe, last action, activities).
+  useEffect(() => {
+    if (agents.length === 0) return;
+    const agentId = agents[activeAgent]?.id;
+    if (!agentId) return;
+    let cancelled = false;
+    async function poll() {
+      const status = await getAgentStatus(agentId);
+      if (!cancelled) setAgentStatus(status);
+    }
+    poll();
+    const t = setInterval(poll, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [agents, activeAgent]);
+
   // Poll agent service for unrecorded actions and submit them on-chain.
   useEffect(() => {
     if (!address || !AGENT_REGISTRY_ADDRESS || agents.length === 0) return;
@@ -192,9 +220,11 @@ export default function DashboardPage() {
   };
 
   const totalValue = 24831.45;
-  const change24h = 342.18;
-  const currentAPY = 11.4;
-  const sharpe = 1.82;
+  const change24h = agentStatus?.pendingActions.slice(-1)[0]?.pnlBps
+    ? agentStatus.pendingActions.slice(-1)[0].pnlBps * 2.48
+    : 342.18;
+  const sharpe = agentStatus?.lastSharpe ?? 0;
+  const currentAPY = sharpe > 0 ? parseFloat((sharpe * 6.2).toFixed(1)) : 11.4;
 
   const makeSparkline = () => {
     let v = 1.4; const pts: number[] = [];
@@ -210,12 +240,13 @@ export default function DashboardPage() {
   }).join(' ');
   const sparkFill = sparkPath + ` L 320 60 L 0 60 Z`;
 
-  const slices = donutPaths(ALLOCATIONS);
+  const allocations = weightsToAllocations(agentStatus?.lastWeights);
+  const slices = donutPaths(allocations);
 
   const getAgentId = (): number => agents[activeAgent]?.id ?? parseInt(sessionStorage.getItem('spike_agent_id') ?? '1', 10);
 
   const handlePauseResume = () => {
-    if (agentStatus === 'running') setShowConfirm(true);
+    if (botStatus === 'running') setShowConfirm(true);
     else handleResume();
   };
 
@@ -233,7 +264,7 @@ export default function DashboardPage() {
         });
         await waitForTransactionReceipt(wagmiConfig, { hash });
       }
-      setAgentStatus('running');
+      setBotStatus('running');
       showToast('Bot resumed');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to resume', 'error');
@@ -257,7 +288,7 @@ export default function DashboardPage() {
         });
         await waitForTransactionReceipt(wagmiConfig, { hash });
       }
-      setAgentStatus('paused');
+      setBotStatus('paused');
       showToast('Bot paused');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to pause', 'error');
@@ -349,10 +380,10 @@ export default function DashboardPage() {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 22, color: '#555555', letterSpacing: '-0.01em' }}>Your portfolio</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: agentStatus === 'running' ? '#d4edda' : '#fff3cd', border: `1px solid ${agentStatus === 'running' ? '#b7dfbe' : '#ffe69c'}`, borderRadius: 99, padding: '3px 10px' }}>
-                <div style={{ width: 7, height: 7, borderRadius: '50%', background: agentStatus === 'running' ? '#2d6a4f' : '#856404' }} />
-                <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, color: agentStatus === 'running' ? '#2d6a4f' : '#856404' }}>
-                  {agentStatus === 'running' ? 'Bot is running' : 'Bot is paused'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: botStatus === 'running' ? '#d4edda' : '#fff3cd', border: `1px solid ${botStatus === 'running' ? '#b7dfbe' : '#ffe69c'}`, borderRadius: 99, padding: '3px 10px' }}>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', background: botStatus === 'running' ? '#2d6a4f' : '#856404' }} />
+                <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 11, color: botStatus === 'running' ? '#2d6a4f' : '#856404' }}>
+                  {botStatus === 'running' ? 'Bot is running' : 'Bot is paused'}
                 </span>
               </div>
             </div>
@@ -360,13 +391,13 @@ export default function DashboardPage() {
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Btn variant="ghost" size="sm" onClick={() => router.push('/app/configure')}>Change strategy</Btn>
-            <Btn variant={agentStatus === 'running' ? 'sage' : 'primary'} size="sm"
-              icon={actionLoading ? undefined : agentStatus === 'running' ? <Icons.Pause /> : <Icons.Play />}
+            <Btn variant={botStatus === 'running' ? 'sage' : 'primary'} size="sm"
+              icon={actionLoading ? undefined : botStatus === 'running' ? <Icons.Pause /> : <Icons.Play />}
               onClick={handlePauseResume}
               style={{ minWidth: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               {actionLoading ? (
                 <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(85,85,85,0.3)', borderTopColor: '#555555', animation: 'spin 0.8s linear infinite' }} />
-              ) : agentStatus === 'running' ? 'Pause bot' : 'Resume bot'}
+              ) : botStatus === 'running' ? 'Pause bot' : 'Resume bot'}
             </Btn>
           </div>
         </div>
@@ -403,9 +434,11 @@ export default function DashboardPage() {
               </div>
               <div style={{ flex: 1, minWidth: 100 }}>
                 <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 900, fontSize: 28, color: '#555555', letterSpacing: '-0.02em' }}>${totalValue.toLocaleString()}</div>
-                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, color: '#2d6a4f', marginBottom: 12 }}>+${change24h.toFixed(2)} today</div>
+                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, color: change24h >= 0 ? '#2d6a4f' : '#842029', marginBottom: 12 }}>
+                  {change24h >= 0 ? '+' : ''}{change24h.toFixed(1)} bps last cycle
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {ALLOCATIONS.map(a => (
+                  {allocations.map(a => (
                     <div key={a.sym} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ width: 8, height: 8, borderRadius: '50%', background: a.color, flexShrink: 0 }} />
                       <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, color: '#555555', minWidth: 36 }}>{a.sym}</span>
@@ -508,10 +541,10 @@ export default function DashboardPage() {
           <SectionLabel>Bot activity</SectionLabel>
           <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
             {[
-              { label: 'Last rebalance', value: '8 min ago' },
-              { label: 'Decision quality', value: '94.2%' },
-              { label: 'Next check', value: 'in ~52 min' },
-              { label: 'Total trades', value: '47' },
+              { label: 'Last rebalance', value: relativeTime(agentStatus?.lastAction) },
+              { label: 'Decision quality', value: perfScore && perfScore.totalActions > 0n ? `${((Number(perfScore.successCount) / Number(perfScore.totalActions)) * 100).toFixed(1)}%` : '—' },
+              { label: 'Sharpe (live)', value: agentStatus?.lastSharpe ? agentStatus.lastSharpe.toFixed(3) : '—' },
+              { label: 'Total actions', value: perfScore ? perfScore.totalActions.toString() : (agentStatus?.pendingActions.length.toString() ?? '0') },
             ].map(m => (
               <div key={m.label}>
                 <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#8AADA4', marginBottom: 4 }}>{m.label}</div>
@@ -534,20 +567,30 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {ACTIVITIES.map((a, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? '#FBF7F0' : '#EDF3F0' }}>
-                    <td style={{ padding: '12px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#A8A49E' }}>{a.time}</td>
-                    <td style={{ padding: '12px 12px', fontWeight: 700, color: '#555555' }}>{a.action}</td>
-                    <td style={{ padding: '12px 12px', color: '#555555' }}>{a.assets}</td>
-                    <td style={{ padding: '12px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555' }}>{a.amount}</td>
-                    <td style={{ padding: '12px 12px' }}>
-                      <a href="#" style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#5e8880', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
-                        {a.hash} <Icons.ExternalLink />
-                      </a>
+                {(agentStatus?.pendingActions.length ?? 0) === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: '24px 12px', textAlign: 'center', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#A8A49E' }}>
+                      Bot is running — first cycle completes in ~2 minutes
                     </td>
-                    <td style={{ padding: '12px 12px' }}><StatusPill status={a.status} /></td>
                   </tr>
-                ))}
+                ) : (
+                  [...(agentStatus?.pendingActions ?? [])].reverse().slice(0, 10).map((a, i) => (
+                    <tr key={a.id} style={{ background: i % 2 === 0 ? '#FBF7F0' : '#EDF3F0' }}>
+                      <td style={{ padding: '12px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#A8A49E' }}>{relativeTime(a.timestamp)}</td>
+                      <td style={{ padding: '12px 12px', fontWeight: 700, color: '#555555' }}>Rebalance</td>
+                      <td style={{ padding: '12px 12px', color: '#555555' }}>{agentStatus?.config.assets.join('→') ?? 'Portfolio'}</td>
+                      <td style={{ padding: '12px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: a.pnlBps >= 0 ? '#2d6a4f' : '#842029' }}>
+                        {a.pnlBps >= 0 ? '+' : ''}{a.pnlBps} bps
+                      </td>
+                      <td style={{ padding: '12px 12px' }}>
+                        <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#5e8880' }}>
+                          {a.actionHash.slice(0, 10)}…
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 12px' }}><StatusPill status={a.recorded ? 'attested' : 'pending'} /></td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

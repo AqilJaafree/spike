@@ -7,12 +7,6 @@ function agentHeaders(): HeadersInit {
   return key ? { 'Content-Type': 'application/json', 'X-Agent-Api-Key': key } : { 'Content-Type': 'application/json' };
 }
 
-export async function getAgentStatus(agentId: number) {
-  const res = await fetch(`${AGENT_URL}/api/agent/status/${agentId}`, { headers: agentHeaders() });
-  if (!res.ok) throw new Error('Failed to fetch agent status');
-  return res.json();
-}
-
 export async function pauseAgent(agentId: number) {
   const res = await fetch(`${AGENT_URL}/api/agent/pause/${agentId}`, { method: 'POST', headers: agentHeaders() });
   if (!res.ok) throw new Error('Failed to pause agent');
@@ -44,6 +38,30 @@ export type PendingAction = {
   timestamp: string;
   recorded: boolean;
 };
+
+export type AgentStatus = {
+  status: 'active' | 'paused';
+  config: {
+    assets: string[];
+    riskLevel: string;
+    targetApy: number;
+    driftThreshold: number;
+  };
+  lastAction?: string;
+  lastWeights?: Record<string, number>;
+  lastSharpe?: number;
+  pendingActions: PendingAction[];
+};
+
+export async function getAgentStatus(agentId: number): Promise<AgentStatus | null> {
+  try {
+    const res = await fetch(`${AGENT_URL}/api/agent/status/${agentId}`, { headers: agentHeaders() });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
 
 export async function getPendingActions(agentId: number): Promise<PendingAction[]> {
   const res = await fetch(`${AGENT_URL}/api/agent/actions/${agentId}`, { headers: agentHeaders() });

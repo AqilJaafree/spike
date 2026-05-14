@@ -2,8 +2,9 @@ import { Router, type Router as ExpressRouter } from 'express';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { startAgentLoop, stopAgentLoop, type CycleResult } from '../market/scheduler.js';
 
-type PendingAction = {
+export type PendingAction = {
   id: string;
   actionHash: string;
   txHash: string;
@@ -13,9 +14,25 @@ type PendingAction = {
   recorded: boolean;
 };
 
-type AgentState = { status: 'active' | 'paused'; config: unknown; lastAction?: string; pendingActions: PendingAction[] };
+export type AgentConfig = {
+  riskLevel: 'conservative' | 'balanced' | 'aggressive';
+  assets: string[];
+  targetApy: number;
+  maxDrawdown: number;
+  rebalanceFrequency: 'daily' | 'weekly' | 'on-drift';
+  qrngSeedingEnabled: boolean;
+  driftThreshold: number;
+};
 
-// JSON file-backed persistence — survives process restarts
+export type AgentState = {
+  status: 'active' | 'paused';
+  config: AgentConfig;
+  lastAction?: string;
+  lastWeights?: Record<string, number>;
+  lastSharpe?: number;
+  pendingActions: PendingAction[];
+};
+
 const STATE_FILE = process.env.AGENT_STATE_FILE ?? './agents.json';
 
 function loadAgents(): Map<number, AgentState> {
@@ -28,13 +45,50 @@ function loadAgents(): Map<number, AgentState> {
   }
 }
 
-function persist(agents: Map<number, AgentState>): void {
+function persist(): void {
   try {
     writeFileSync(STATE_FILE, JSON.stringify(Object.fromEntries(agents.entries()), null, 2));
-  } catch { /* non-critical — state stays in memory */ }
+  } catch { /* non-critical */ }
 }
 
 const agents = loadAgents();
+
+// Scheduler callbacks — shared by register/resume
+const schedulerCallbacks = {
+  getState: (agentId: number) => {
+    const state = agents.get(agentId);
+    if (!state || state.status !== 'active') return undefined;
+    const n = state.config.assets.length;
+    return {
+      config: state.config,
+      currentWeights: state.lastWeights ?? Object.fromEntries(state.config.assets.map(a => [a, 1 / n])),
+    };
+  },
+  onRebalance: (agentId: number, result: CycleResult) => {
+    const state = agents.get(agentId);
+    if (!state) return;
+    state.lastWeights = result.weights;
+    state.lastSharpe = result.sharpe;
+    state.lastAction = new Date().toISOString();
+    state.pendingActions.push({
+      id: randomUUID(),
+      actionHash: result.actionHash,
+      txHash: `0x${'0'.repeat(64)}`,
+      success: result.pnlBps >= 0,
+      pnlBps: result.pnlBps,
+      timestamp: new Date().toISOString(),
+      recorded: false,
+    });
+    persist();
+  },
+};
+
+// Restart loops for agents that were active before server restart
+for (const [agentId, state] of agents) {
+  if (state.status === 'active') {
+    startAgentLoop(agentId, schedulerCallbacks);
+  }
+}
 
 export const router: ExpressRouter = Router();
 
@@ -53,9 +107,10 @@ router.post('/pause/:agentId', (req, res) => {
   const id = parseInt(req.params.agentId);
   const agent = agents.get(id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  stopAgentLoop(id);
   agent.status = 'paused';
   agent.lastAction = new Date().toISOString();
-  persist(agents);
+  persist();
   res.json({ success: true });
 });
 
@@ -65,7 +120,8 @@ router.post('/resume/:agentId', (req, res) => {
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
   agent.status = 'active';
   agent.lastAction = new Date().toISOString();
-  persist(agents);
+  persist();
+  startAgentLoop(id, schedulerCallbacks);
   res.json({ success: true });
 });
 
@@ -86,8 +142,16 @@ router.post('/register', (req, res) => {
   const parsed = RegisterSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { agentId, config } = parsed.data;
-  agents.set(agentId, { status: 'active', config, lastAction: new Date().toISOString(), pendingActions: [] });
-  persist(agents);
+  const n = config.assets.length;
+  agents.set(agentId, {
+    status: 'active',
+    config,
+    lastAction: new Date().toISOString(),
+    lastWeights: Object.fromEntries(config.assets.map(a => [a, 1 / n])),
+    pendingActions: [],
+  });
+  persist();
+  startAgentLoop(agentId, schedulerCallbacks);
   res.json({ success: true, agentId });
 });
 
@@ -98,7 +162,6 @@ const ActionSchema = z.object({
   pnlBps: z.number(),
 });
 
-// Record a new action to be submitted on-chain by the frontend wallet.
 router.post('/action/:agentId', (req, res) => {
   const id = parseInt(req.params.agentId);
   const agent = agents.get(id);
@@ -108,11 +171,10 @@ router.post('/action/:agentId', (req, res) => {
   const action: PendingAction = { id: randomUUID(), ...parsed.data, timestamp: new Date().toISOString(), recorded: false };
   agent.pendingActions.push(action);
   agent.lastAction = action.timestamp;
-  persist(agents);
+  persist();
   res.json({ success: true, action });
 });
 
-// Return actions not yet recorded on-chain.
 router.get('/actions/:agentId', (req, res) => {
   const id = parseInt(req.params.agentId);
   const agent = agents.get(id);
@@ -122,7 +184,6 @@ router.get('/actions/:agentId', (req, res) => {
 
 const AckSchema = z.object({ actionId: z.string() });
 
-// Mark an action as recorded on-chain (called by frontend after tx confirms).
 router.post('/action/:agentId/ack', (req, res) => {
   const id = parseInt(req.params.agentId);
   const agent = agents.get(id);
@@ -132,6 +193,6 @@ router.post('/action/:agentId/ack', (req, res) => {
   const action = agent.pendingActions.find(a => a.id === parsed.data.actionId);
   if (!action) return res.status(404).json({ error: 'Action not found' });
   action.recorded = true;
-  persist(agents);
+  persist();
   res.json({ success: true });
 });
