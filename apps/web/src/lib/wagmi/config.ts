@@ -20,14 +20,16 @@ export const zgMainnet = defineChain({
   blockExplorers: { default: { name: '0G Explorer', url: 'https://chainscan.0g.ai' } },
 });
 
+const isBrowser = typeof window !== 'undefined';
+
 export const wagmiConfig: Config = createConfig({
   ssr: true,
   chains: [zgTestnet, zgMainnet],
-  connectors: [
+  connectors: isBrowser ? [
     metaMask(),
     walletConnect({ projectId: process.env.NEXT_PUBLIC_WC_PROJECT_ID ?? '' }),
     coinbaseWallet({ appName: 'Spike' }),
-  ],
+  ] : [],
   transports: {
     [zgTestnet.id]: http(),
     [zgMainnet.id]: http(),

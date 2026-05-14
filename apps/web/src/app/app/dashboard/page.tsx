@@ -77,6 +77,12 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    // Optimistic fallback: show stored agent immediately while on-chain load happens
+    const storedId = sessionStorage.getItem('spike_agent_id');
+    if (storedId && agents.length === 0) {
+      setAgents([{ id: Number(storedId), name: 'Agent 1', risk: 'balanced', status: 'running', value: '$0' }]);
+    }
+
     if (!address || !AGENT_REGISTRY_ADDRESS) return;
     setAgentsLoading(true);
     readContract(wagmiConfig, {
@@ -96,7 +102,6 @@ export default function DashboardPage() {
           status: 'running' as const,
           value: '$0',
         })));
-        const storedId = sessionStorage.getItem('spike_agent_id');
         const idx = storedId ? agentIds.findIndex(id => id.toString() === storedId) : -1;
         setActiveAgent(idx >= 0 ? idx : agentIds.length - 1);
       })
