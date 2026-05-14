@@ -156,6 +156,7 @@ export default function ConfigurePage() {
       abi: SKILL_REGISTRY_ABI,
       functionName: 'getAllSkills',
       args: [],
+      chainId: 16602,
     })
       .then((raw) => {
         const items = (raw as Array<{ id: string; name: string; category: number; storageHash: `0x${string}`; active: boolean; registeredAt: bigint }>)

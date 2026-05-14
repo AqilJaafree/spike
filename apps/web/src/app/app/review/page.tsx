@@ -102,6 +102,7 @@ export default function ReviewPage() {
           abi: PQC_REGISTRY_ABI,
           functionName: 'isRegistered',
           args: [address],
+          chainId: 16602,
         });
 
         if (!isReg) {

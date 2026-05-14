@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAccount, useWriteContract } from 'wagmi';
+import { useAccount, useChainId, useSwitchChain, useWriteContract } from 'wagmi';
 import { readContract, waitForTransactionReceipt } from '@wagmi/core';
 import { Btn, Card, Row, SectionLabel, StatusPill, Toast } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
 import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI, AGENT_NFT_ADDRESS, AGENT_NFT_ABI } from '@/lib/contracts';
+import { zgTestnet } from '@/lib/wagmi/config';
 import { pauseAgent, resumeAgent, getPendingActions, ackAction } from '@/lib/agent/client';
 
 interface Agent {
@@ -53,7 +54,10 @@ function donutPaths(allocations: typeof ALLOCATIONS) {
 export default function DashboardPage() {
   const router = useRouter();
   const { address } = useAccount();
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
+  const isWrongNetwork = !!address && chainId !== zgTestnet.id;
 
   const [agentStatus, setAgentStatus] = useState<'running' | 'paused'>('running');
   const [period, setPeriod] = useState('30d');
@@ -80,6 +84,7 @@ export default function DashboardPage() {
       abi: AGENT_REGISTRY_ABI,
       functionName: 'getOwnerAgents',
       args: [address],
+      chainId: zgTestnet.id,
     })
       .then((ids) => {
         const agentIds = ids as bigint[];
@@ -111,12 +116,14 @@ export default function DashboardPage() {
         abi: AGENT_NFT_ABI,
         functionName: 'getAgentMeta',
         args: [agentId],
+        chainId: zgTestnet.id,
       }),
       readContract(wagmiConfig, {
         address: AGENT_REGISTRY_ADDRESS,
         abi: AGENT_REGISTRY_ABI,
         functionName: 'getPerformanceScore',
         args: [agentId],
+        chainId: zgTestnet.id,
       }),
     ])
       .then(([meta, perf]) => {
@@ -162,6 +169,7 @@ export default function DashboardPage() {
           abi: AGENT_REGISTRY_ABI,
           functionName: 'getPerformanceScore',
           args: [BigInt(agentId)],
+          chainId: zgTestnet.id,
         })
           .then(perf => setPerfScore(perf as typeof perfScore))
           .catch(() => null);
@@ -292,6 +300,20 @@ export default function DashboardPage() {
           <Icons.Settings />
         </button>
       </nav>
+
+      {/* Wrong network banner */}
+      {isWrongNetwork && (
+        <div style={{ background: '#fff3cd', borderBottom: '1px solid #ffe69c', padding: '10px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, color: '#856404' }}>
+            Wrong network — connect to 0G Testnet to see your agents
+          </span>
+          <button
+            onClick={() => switchChain({ chainId: zgTestnet.id })}
+            style={{ background: '#856404', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 16px', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+            Switch to 0G Testnet
+          </button>
+        </div>
+      )}
 
       {/* Agent tabs */}
       <div style={{ background: '#FBF7F0', borderBottom: '1px solid #CDC9C3', padding: '0 24px', display: 'flex', alignItems: 'center', overflowX: 'auto' }}>
