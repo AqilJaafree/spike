@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useWriteContract } from 'wagmi';
-import { waitForTransactionReceipt } from '@wagmi/core';
-import { Btn, Card, SectionLabel, StatusPill, Toast } from '@/components/ui/primitives';
+import { readContract, waitForTransactionReceipt } from '@wagmi/core';
+import { Btn, Card, Row, SectionLabel, StatusPill, Toast } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
-import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI } from '@/lib/contracts';
+import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI, AGENT_NFT_ADDRESS, AGENT_NFT_ABI } from '@/lib/contracts';
 import { pauseAgent, resumeAgent } from '@/lib/agent/client';
 
 interface Agent {
@@ -59,16 +59,73 @@ export default function DashboardPage() {
   const [period, setPeriod] = useState('30d');
   const [showConfirm, setShowConfirm] = useState(false);
   const [activeAgent, setActiveAgent] = useState(0);
-  const [agents, setAgents] = useState<Agent[]>([
-    { id: 0, name: 'Agent 1', risk: 'balanced', status: 'running', value: '$24,831' },
-  ]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'success' as 'success' | 'error' });
+  const [nftMeta, setNftMeta] = useState<{ dilithiumFingerprint: `0x${string}`; configRoot: `0x${string}`; actionSigFingerprint: `0x${string}`; skillKey: `0x${string}`; mintedAt: bigint } | null>(null);
+  const [perfScore, setPerfScore] = useState<{ totalActions: bigint; successCount: bigint; pnlBasisPoints: bigint; lastUpdatedAt: bigint } | null>(null);
+  const [nftLoading, setNftLoading] = useState(false);
 
   useEffect(() => {
     setWalletAddress(sessionStorage.getItem('spike_wallet'));
   }, []);
+
+  useEffect(() => {
+    if (!address || !AGENT_REGISTRY_ADDRESS) return;
+    setAgentsLoading(true);
+    readContract(wagmiConfig, {
+      address: AGENT_REGISTRY_ADDRESS,
+      abi: AGENT_REGISTRY_ABI,
+      functionName: 'getOwnerAgents',
+      args: [address],
+    })
+      .then((ids) => {
+        const agentIds = ids as bigint[];
+        if (agentIds.length === 0) return;
+        setAgents(agentIds.map((id, i) => ({
+          id: Number(id),
+          name: `Agent ${i + 1}`,
+          risk: 'balanced',
+          status: 'running' as const,
+          value: '$0',
+        })));
+        const storedId = sessionStorage.getItem('spike_agent_id');
+        const idx = storedId ? agentIds.findIndex(id => id.toString() === storedId) : -1;
+        setActiveAgent(idx >= 0 ? idx : agentIds.length - 1);
+      })
+      .catch(() => null)
+      .finally(() => setAgentsLoading(false));
+  }, [address]);
+
+  useEffect(() => {
+    if (!address || !AGENT_NFT_ADDRESS || !AGENT_REGISTRY_ADDRESS || agents.length === 0) return;
+    const agent = agents[activeAgent];
+    if (!agent) return;
+    const agentId = BigInt(agent.id);
+    setNftLoading(true);
+    Promise.all([
+      readContract(wagmiConfig, {
+        address: AGENT_NFT_ADDRESS,
+        abi: AGENT_NFT_ABI,
+        functionName: 'getAgentMeta',
+        args: [agentId],
+      }),
+      readContract(wagmiConfig, {
+        address: AGENT_REGISTRY_ADDRESS,
+        abi: AGENT_REGISTRY_ABI,
+        functionName: 'getPerformanceScore',
+        args: [agentId],
+      }),
+    ])
+      .then(([meta, perf]) => {
+        setNftMeta(meta as { dilithiumFingerprint: `0x${string}`; configRoot: `0x${string}`; actionSigFingerprint: `0x${string}`; skillKey: `0x${string}`; mintedAt: bigint });
+        setPerfScore(perf as { totalActions: bigint; successCount: bigint; pnlBasisPoints: bigint; lastUpdatedAt: bigint });
+      })
+      .catch(() => null)
+      .finally(() => setNftLoading(false));
+  }, [address, activeAgent, agents]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ visible: true, message, type });
@@ -96,7 +153,7 @@ export default function DashboardPage() {
 
   const slices = donutPaths(ALLOCATIONS);
 
-  const getAgentId = (): number => parseInt(sessionStorage.getItem('spike_agent_id') ?? '1', 10);
+  const getAgentId = (): number => agents[activeAgent]?.id ?? parseInt(sessionStorage.getItem('spike_agent_id') ?? '1', 10);
 
   const handlePauseResume = () => {
     if (agentStatus === 'running') setShowConfirm(true);
@@ -192,13 +249,20 @@ export default function DashboardPage() {
 
       {/* Agent tabs */}
       <div style={{ background: '#FBF7F0', borderBottom: '1px solid #CDC9C3', padding: '0 24px', display: 'flex', alignItems: 'center', overflowX: 'auto' }}>
-        {agents.map((a, i) => (
-          <button key={a.id} onClick={() => setActiveAgent(i)} style={{ padding: '12px 20px', background: 'none', border: 'none', cursor: 'pointer', borderBottom: activeAgent === i ? '2px solid #555555' : '2px solid transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: activeAgent === i ? 700 : 500, fontSize: 14, color: activeAgent === i ? '#555555' : '#A8A49E', display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.15s', whiteSpace: 'nowrap' }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: a.status === 'running' ? '#2d6a4f' : a.status === 'setting up' ? '#856404' : '#A8A49E' }} />
-            {a.name}
-            <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 600, fontSize: 11, color: activeAgent === i ? '#8AADA4' : '#CDC9C3' }}>{a.value}</span>
-          </button>
-        ))}
+        {agentsLoading ? (
+          <div style={{ padding: '12px 20px', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ width: 72, height: 16, borderRadius: 8, background: '#EDF3F0' }} />
+            <div style={{ width: 56, height: 16, borderRadius: 8, background: '#EDF3F0' }} />
+          </div>
+        ) : (
+          agents.map((a, i) => (
+            <button key={a.id} onClick={() => setActiveAgent(i)} style={{ padding: '12px 20px', background: 'none', border: 'none', cursor: 'pointer', borderBottom: activeAgent === i ? '2px solid #555555' : '2px solid transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: activeAgent === i ? 700 : 500, fontSize: 14, color: activeAgent === i ? '#555555' : '#A8A49E', display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.15s', whiteSpace: 'nowrap' }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: a.status === 'running' ? '#2d6a4f' : a.status === 'setting up' ? '#856404' : '#A8A49E' }} />
+              {a.name}
+              <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 600, fontSize: 11, color: activeAgent === i ? '#8AADA4' : '#CDC9C3' }}>{a.value}</span>
+            </button>
+          ))
+        )}
         <button onClick={addAgent} style={{ padding: '12px 16px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 600, fontSize: 13, color: '#A8A49E', display: 'flex', alignItems: 'center', gap: 6, transition: 'color 0.15s' }}
           onMouseEnter={e => (e.currentTarget.style.color = '#555555')}
           onMouseLeave={e => (e.currentTarget.style.color = '#A8A49E')}>
@@ -235,7 +299,19 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Empty state */}
+      {!agentsLoading && agents.length === 0 && (
+        <div style={{ maxWidth: 480, margin: '80px auto', padding: '0 24px', textAlign: 'center' }}>
+          <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 22, color: '#555555', marginBottom: 10 }}>No agents yet</div>
+          <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 28, lineHeight: 1.7 }}>
+            No agents found for this wallet on-chain. Deploy your first Spike agent to get started.
+          </div>
+          <Btn size="lg" onClick={() => router.push('/app/configure')}>Deploy your first agent →</Btn>
+        </div>
+      )}
+
       {/* Main content */}
+      {agents.length > 0 && (
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '28px 24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 16 }}>
 
@@ -267,6 +343,63 @@ export default function DashboardPage() {
               </div>
             </div>
           </Card>
+
+          {AGENT_NFT_ADDRESS && AGENT_REGISTRY_ADDRESS && (
+            <Card>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <SectionLabel>Agent NFT</SectionLabel>
+                <span style={{ background: '#555555', color: '#FBF7F0', borderRadius: 6, padding: '2px 7px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontWeight: 700, fontSize: 10, letterSpacing: '0.06em' }}>INFT</span>
+              </div>
+              {nftLoading ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {[80, 60, 60, 50, 70].map((w, i) => (
+                    <div key={i} style={{ height: 14, borderRadius: 6, background: '#D9E4DD', width: `${w}%`, animation: 'pulse 1.5s ease-in-out infinite' }} />
+                  ))}
+                </div>
+              ) : nftMeta ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <Row label="Dilithium FP">
+                    <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555' }}>
+                      {nftMeta.dilithiumFingerprint.slice(0, 10)}…{nftMeta.dilithiumFingerprint.slice(-4)}
+                    </span>
+                  </Row>
+                  <Row label="Skill key">
+                    <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555' }}>
+                      {nftMeta.skillKey.slice(0, 10)}…
+                    </span>
+                  </Row>
+                  <Row label="Minted">
+                    <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#555555' }}>
+                      {new Date(Number(nftMeta.mintedAt) * 1000).toLocaleDateString()}
+                    </span>
+                  </Row>
+                  {perfScore && (
+                    <>
+                      <Row label="Total actions">
+                        <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, color: '#555555' }}>
+                          {perfScore.totalActions.toString()}
+                        </span>
+                      </Row>
+                      <Row label="Success rate">
+                        <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, color: '#555555' }}>
+                          {perfScore.totalActions > 0n
+                            ? ((Number(perfScore.successCount) / Number(perfScore.totalActions)) * 100).toFixed(1)
+                            : '0.0'}%
+                        </span>
+                      </Row>
+                      <Row label="PnL bps">
+                        <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 13, color: perfScore.pnlBasisPoints >= 0n ? '#2d6a4f' : '#842029' }}>
+                          {perfScore.pnlBasisPoints >= 0n ? '+' : ''}{perfScore.pnlBasisPoints.toString()}
+                        </span>
+                      </Row>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#A8A49E' }}>No agent NFT found for this session.</div>
+              )}
+            </Card>
+          )}
 
           {/* Performance */}
           <Card>
@@ -347,6 +480,7 @@ export default function DashboardPage() {
           </div>
         </Card>
       </div>
+      )}
 
       {/* Pause confirm modal */}
       {showConfirm && (

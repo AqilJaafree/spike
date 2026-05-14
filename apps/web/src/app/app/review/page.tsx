@@ -27,6 +27,13 @@ const DEPLOY_STEPS = [
 
 const RISK_LABEL: Record<string, string> = { conservative: 'Conservative', balanced: 'Balanced', aggressive: 'Aggressive' };
 
+const SKILL_NAMES: Record<string, string> = {
+  'lp-provider': 'Liquidity Provider',
+  'dca-strategy': 'DCA Strategy',
+  'lending-borrowing': 'Lending & Borrowing',
+  'sim-trade': 'Simulation Trade',
+};
+
 const ZERO_B32 = `0x${'0'.repeat(64)}` as `0x${string}`;
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -38,6 +45,7 @@ export default function ReviewPage() {
 
   const [config, setConfig] = useState<Partial<AgentConfig> | null>(null);
   const [optimization, setOptimization] = useState<OptimizeResult | null>(null);
+  const [skillName, setSkillName] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
   const [deployStep, setDeployStep] = useState(-1);
   const [deployed, setDeployed] = useState(false);
@@ -50,6 +58,9 @@ export default function ReviewPage() {
 
     const opt = sessionStorage.getItem('spike_optimization_result');
     if (opt) setOptimization(JSON.parse(opt));
+
+    const skillId = sessionStorage.getItem('spike_skill_id');
+    if (skillId) setSkillName(SKILL_NAMES[skillId] ?? skillId);
   }, []);
 
   async function handleDeploy() {
@@ -61,6 +72,7 @@ export default function ReviewPage() {
     try {
       // Step 1 — hash config + read stored fingerprints
       setDeployStep(0);
+      const skillKeyB32 = (sessionStorage.getItem('spike_skill_key') as `0x${string}`) ?? ZERO_B32;
       const dilithiumFp = sessionStorage.getItem('spike_dilithium_fp') ?? '';
       const kyberFp = sessionStorage.getItem('spike_kyber_fp') ?? '';
       const configRoot = configToBytes32(config);
@@ -111,7 +123,7 @@ export default function ReviewPage() {
           address: AGENT_REGISTRY_ADDRESS,
           abi: AGENT_REGISTRY_ABI,
           functionName: 'deployAgent',
-          args: [configRoot, actionSigFingerprintB32, ZERO_B32],
+          args: [configRoot, actionSigFingerprintB32, ZERO_B32, skillKeyB32],
         });
         const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: agentHash });
         const parsed = parseAgentIdFromReceipt(receipt);
@@ -214,6 +226,11 @@ export default function ReviewPage() {
             </Row>
             <Row label="Max loss limit">
               <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 16, color: '#555555' }}>{config.maxDrawdown}%</span>
+            </Row>
+            <Row label="DeFi Skill">
+              <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, color: '#555555' }}>
+                {skillName || 'None'}
+              </span>
             </Row>
           </div>
         </Card>

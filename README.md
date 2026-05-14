@@ -10,50 +10,65 @@ https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  apps/web  (Next.js 15)                                         │
-│  Landing → Connect Wallet → PQC Keygen → Configure → Deploy → Dashboard │
-└────────────────────────┬────────────────────────────────────────┘
-                         │ REST
-┌────────────────────────▼────────────────────────────────────────┐
-│  packages/agent  (Express)                                      │
-│  Decision loop: prices → QPU weights → drift check → trade      │
-│  Signs every action with Dilithium3, logs to 0G Storage         │
-└──────┬─────────────────────────────────────┬────────────────────┘
-       │ HTTP                                │ SDK
-┌──────▼──────┐                   ┌──────────▼──────────┐
-│  services/  │                   │  packages/0g-client  │
-│  quantum    │                   │  0G Storage + Compute│
-│  (FastAPI)  │                   │  QPU result cache    │
-│  Qiskit Aer │                   └──────────┬───────────┘
-│  portfolio  │                              │
-│  risk / VaR │           ┌──────────────────▼─────────┐
-└─────────────┘           │  0G Chain (EVM, id 16602)   │
-                          │  PQCKeyRegistry              │
-                          │  AgentRegistry               │
-                          └────────────────────────────-─┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  apps/web  (Next.js 15)                                                  │
+│  Landing → Connect Wallet → PQC Keygen → Skill → Configure → Deploy → Dashboard │
+└─────────────────────────┬────────────────────────────────────────────────┘
+                          │ REST (localhost:3001)
+┌─────────────────────────▼────────────────────────────────────────────────┐
+│  packages/agent  (Express :3001)                                         │
+│  Decision loop: prices → QPU weights → drift check → Dilithium3 sign    │
+│  Logs every action to 0G Storage; recordAction hook for on-chain scoring │
+└──────┬──────────────────────────────────────┬────────────────────────────┘
+       │ HTTP (localhost:8000)                 │ SDK
+┌──────▼──────┐                    ┌──────────▼──────────────┐
+│  services/  │                    │  packages/0g-client      │
+│  quantum    │                    │  0G Storage upload/KV    │
+│  (FastAPI)  │                    │  0G Compute broker       │
+│  Qiskit Aer │                    │  QPU result cache (6hr)  │
+│  SLSQP + IAE│                    └──────────┬───────────────┘
+└─────────────┘                               │
+                           ┌──────────────────▼──────────────────┐
+                           │  0G Chain (EVM, chainId 16602)       │
+                           │  PQCKeyRegistry                      │
+                           │  TeeAttestationVerifier              │
+                           │  SkillRegistry                       │
+                           │  AgentNFT (INFT / ERC-721)           │
+                           │  AgentRegistry (+ PerformanceScorer) │
+                           └─────────────────────────────────────┘
 ```
 
 ### Packages
 
 | Path | Description |
 |------|-------------|
-| `packages/contracts` | Hardhat — `PQCKeyRegistry` + `AgentRegistry` on 0G Chain |
-| `packages/pqc` | liboqs-js WASM — Dilithium3 signing, Kyber-1024 + AES-256-GCM encryption |
+| `packages/contracts` | Hardhat — 5 Solidity contracts on 0G Chain |
+| `packages/pqc` | `@noble/post-quantum` — ML-DSA-65 (Dilithium3) signing, ML-KEM-1024 (Kyber) encryption |
 | `packages/0g-client` | 0G Storage SDK + 0G Compute broker, shared TypeScript types |
 | `packages/agent` | DeFi agent decision loop + Express REST API |
+| `packages/skills` | On-chain skill definitions (lp-provider, dca-strategy, lending-borrowing, sim-trade) |
 | `services/quantum` | FastAPI — Qiskit/Aer portfolio optimizer, VaR/CVaR risk sim, rebalancer |
-| `apps/web` | Next.js 15 App Router frontend — 6 PRD screens |
+| `apps/web` | Next.js 15 App Router frontend |
 
 ---
 
 ## Key Design Decisions
 
 ### Post-Quantum Cryptography
-- **Dilithium3** (NIST FIPS 204) signs every agent action before it is written on-chain
-- **Kyber-1024** (NIST FIPS 203) + AES-256-GCM encrypts agent configs before upload to 0G Storage
-- Both algorithms run as liboqs WASM in the browser — private keys never leave the client in plaintext
+- **ML-DSA-65 (Dilithium3)** (NIST FIPS 204) signs every agent action before it is written on-chain
+- **ML-KEM-1024 (Kyber-1024)** (NIST FIPS 203) + AES-256-GCM encrypts agent configs before upload to 0G Storage
+- Both algorithms run via `@noble/post-quantum` in the browser — private keys never leave the client in plaintext
 - Key fingerprints are registered on `PQCKeyRegistry.sol`; the agent checks registration before executing any trade
+
+### On-Chain Skill Registry
+- `SkillRegistry` stores four DeFi skills on-chain: LP Provider, DCA Strategy, Lending/Borrowing, Simulated Trade
+- Users select a skill during the configure wizard; the `skillKey` (keccak256 of skill ID) is passed to `deployAgent`
+- `AgentRegistry` enforces that the skill is active in `SkillRegistry` at deploy time
+
+### Agent NFT (INFT)
+- Every deployed agent mints an ERC-721 `AgentNFT` that stores the agent's Dilithium fingerprint and skill key
+- `tokenURI` returns live performance metadata: total actions, success rate, PnL bps, sourced from `AgentRegistry`
+- PQC-gated transfers: the receiving wallet must have a registered PQC key
 
 ### Quantum-Enhanced Optimization
 - `services/quantum` runs **Qiskit + Aer simulator** locally — no cloud account required
@@ -64,8 +79,8 @@ https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
 
 ### 0G Network Integration
 - **0G Storage** (`@0gfoundation/0g-storage-ts-sdk`): stores Kyber-encrypted agent configs and appends immutable audit logs
-- **0G Compute** (`@0glabs/0g-serving-broker`): runs `inferMarketRegime` to classify the current market as bull / bear / sideways / volatile
-- **0G Chain** (EVM, chainId 16602 testnet / 16661 mainnet): `PQCKeyRegistry` and `AgentRegistry` smart contracts
+- **0G Compute** (`@0glabs/0g-serving-broker`): runs `inferMarketRegime` to classify the current market as bull / bear / sideways / volatile (requires `ZG_INFERENCE_PROVIDER`)
+- **0G Chain** (EVM, chainId 16602 testnet): five smart contracts govern key registration, attestation, skill catalog, agent NFTs, and lifecycle
 
 ---
 
@@ -102,7 +117,8 @@ Fill in the required values:
 |----------|----------------|
 | `DEPLOYER_PRIVATE_KEY` | Your 0G Chain wallet private key |
 | `NEXT_PUBLIC_WC_PROJECT_ID` | [WalletConnect Cloud](https://cloud.walletconnect.com) → create a project |
-| `ZG_INFERENCE_PROVIDER` | 0G Compute inference provider address (optional for local dev) |
+| `ZG_INFERENCE_PROVIDER` | 0G Compute inference provider address (optional — market regime feature) |
+| `ZG_MLDSA_VERIFY_PROVIDER` | 0G Compute TeeML provider address (optional — TEE attestation feature) |
 
 The 0G Network RPC, indexer, and KV URLs are pre-filled for testnet and can be left as-is.
 
@@ -113,12 +129,17 @@ pnpm contracts:compile
 pnpm contracts:deploy:testnet
 ```
 
-The deploy script saves `packages/contracts/deployments.json`. Copy the addresses into `.env`:
+The deploy script saves `packages/contracts/deployments.json` and registers the four default skills in `SkillRegistry`. Copy **all five** addresses into `.env`:
 
 ```
 NEXT_PUBLIC_PQC_KEY_REGISTRY=0x...
+NEXT_PUBLIC_TEE_VERIFIER=0x...
+NEXT_PUBLIC_SKILL_REGISTRY=0x...
+NEXT_PUBLIC_AGENT_NFT=0x...
 NEXT_PUBLIC_AGENT_REGISTRY=0x...
 ```
+
+> If deploying to Netlify, update all five addresses in `netlify.toml` under `[build.environment]` as well.
 
 ### 4. Start the quantum service
 
@@ -155,10 +176,10 @@ This starts (in parallel via Turborepo):
 |--------|-------|-------------|
 | 01 Landing | `/` | Hero, protocol stats, feature overview |
 | 02 Connect Wallet | `/app` | MetaMask / WalletConnect / Coinbase modal |
-| 03 PQC Keygen | `/app/setup` | Generates Dilithium3 + Kyber-1024 keypairs in-browser, registers on-chain |
-| 04 Configure Wizard | `/app/configure` | Risk profile, asset selection, APY/drawdown targets, QRNG toggle |
-| 05 Review & Deploy | `/app/review` | Strategy summary, security attestation, 5-step deploy animation |
-| 06 Dashboard | `/app/dashboard` | Live allocation chart, Sharpe 30d, VaR/CVaR cards, audit log |
+| 03 PQC Keygen | `/app/setup` | Generates ML-DSA-65 + ML-KEM-1024 keypairs in-browser, registers on-chain |
+| 04 Configure Wizard | `/app/configure` | **Step 0:** Skill selection from on-chain `SkillRegistry`; then Risk profile, assets, APY/drawdown targets |
+| 05 Review & Deploy | `/app/review` | Strategy summary (includes selected skill), PQC registration, `deployAgent` → mints AgentNFT |
+| 06 Dashboard | `/app/dashboard` | Live allocation chart, Sharpe 30d, VaR/CVaR, Agent NFT card (fingerprint, skill, performance score), audit log |
 
 ---
 
@@ -179,29 +200,30 @@ This starts (in parallel via Turborepo):
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Service health |
-| POST | `/register` | Register and start an agent with a given config |
-| GET | `/status/:agentId` | Current agent state |
-| POST | `/pause/:agentId` | Pause agent execution |
-| POST | `/resume/:agentId` | Resume agent execution |
+| POST | `/api/agent/register` | Register and start an agent with a given config |
+| GET | `/api/agent/status/:agentId` | Current agent state |
+| POST | `/api/agent/pause/:agentId` | Pause agent execution |
+| POST | `/api/agent/resume/:agentId` | Resume agent execution |
 
 ---
 
 ## Smart Contracts
 
-### Deployed & Verified — 0G Testnet (Chain ID 16602)
+### Deployed — 0G Testnet (Chain ID 16602)
 
-| Contract | Address | Explorer |
-|----------|---------|---------|
-| `PQCKeyRegistry` | [`0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027`](https://explorer.0g.ai/testnet/blockchain/accounts/0x300fa0af86201a410bebd511ca7fb81548a0f027/transactions) | [View](https://explorer.0g.ai/testnet/blockchain/accounts/0x300fa0af86201a410bebd511ca7fb81548a0f027/transactions) |
-| `AgentRegistry` | [`0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0`](https://explorer.0g.ai/testnet/blockchain/accounts/0x5bbe9d2735eefdF453f71fe3f2bcd3e1cb8cb8b0/transactions) | [View](https://explorer.0g.ai/testnet/blockchain/accounts/0x5bbe9d2735eefdF453f71fe3f2bcd3e1cb8cb8b0/transactions) |
+> Deployed 2026-05-13. If you redeploy, update all addresses in `.env` and `netlify.toml`.
 
-`AgentRegistry` is deployed with `PQCKeyRegistry` as its constructor argument, enforcing that every agent owner must have on-chain PQC key registration.
+| Contract | Address |
+|----------|---------|
+| `PQCKeyRegistry` | `0xa7e58D52e99AB7bC2F3B98475AF2BF8a8B3F97b2` |
+| `TeeAttestationVerifier` | `0x1922B98277A5eC6201B935386229367Dc4bF16b6` |
+| `SkillRegistry` | `0x659f6969c383bFD0890830c4BF475B602524Eb3C` |
+| `AgentNFT` | `0xB21F191F63Bdde9342D7aa33d4F3115c0B7Af6bD` |
+| `AgentRegistry` | `0xb9fA9A2582B00C62E8A43E689Ccd560Ed1161CAD` |
 
----
+### Contract Summaries
 
-### `PQCKeyRegistry`
-Stores Dilithium3 and Kyber-1024 public key fingerprints per wallet address.
-
+**`PQCKeyRegistry`** — stores ML-DSA-65 and ML-KEM-1024 public key fingerprints per wallet.
 ```
 register(dilithiumFp, kyberFp, storageRoot)
 rotate(dilithiumFp, kyberFp, storageRoot)
@@ -210,16 +232,37 @@ getKeys(address) → (dilithiumFp, kyberFp, storageRoot, timestamp)
 isRegistered(address) → bool
 ```
 
-### `AgentRegistry`
-Deploys and manages autonomous agents; requires PQC registration.
-
+**`TeeAttestationVerifier`** — stores Intel TDX TEE attestation proofs. `AgentRegistry` calls `isVerified` before allowing `deployAgent`. An off-chain attestor must call `registerVerification` with the user's signature fingerprints before the user can deploy.
 ```
-deployAgent(configRoot, dilithiumSig, attestationId) → agentId
+registerVerification(pubkeyFp, configRoot, actionSigFp)
+isVerified(pubkeyFp, configRoot, actionSigFp) → bool
+```
+
+**`SkillRegistry`** — on-chain catalog of approved DeFi skills (Ownable).
+```
+getAllSkills() → Skill[]
+getSkill(skillKey) → Skill
+isActive(skillKey) → bool
+skillCount() → uint256
+```
+
+**`AgentNFT`** — ERC-721 with PQC-gated transfers and live `tokenURI` sourcing performance data from `AgentRegistry`.
+```
+getAgentMeta(tokenId) → (owner, dilithiumFp, skillKey, mintedAt)
+ownerOf(tokenId) → address
+tokenURI(tokenId) → string  // live JSON with performance data
+```
+
+**`AgentRegistry`** — agent lifecycle, performance scoring, wires all four contracts.
+```
+deployAgent(configRoot, actionSigFingerprint, attestationId, skillKey) → agentId
 pauseAgent(agentId)
 resumeAgent(agentId)
 withdrawAgent(agentId)
 updateConfig(agentId, newConfigRoot, dilithiumSig)
 recordAction(agentId, actionHash, txHash)
+getOwnerAgents(owner) → agentId[]
+getPerformanceScore(agentId) → (totalActions, successRate, pnlBps)
 ```
 
 ---
@@ -264,6 +307,16 @@ Switch between networks via `NEXT_PUBLIC_ZG_NETWORK=testnet|mainnet` in `.env`.
 
 ---
 
+## Known Limitations
+
+- **Quantum and agent services are localhost-only.** `NEXT_PUBLIC_QUANTUM_URL` and `NEXT_PUBLIC_AGENT_URL` default to `localhost`. For a deployed frontend, host these services and update both env vars and the quantum service CORS origins.
+- **TeeAttestationVerifier requires an off-chain attestor.** Before a user can call `deployAgent`, an attestor wallet must call `TeeAttestationVerifier.registerVerification` with the user's PQC fingerprint and config root. Without this, `deployAgent` reverts with `SignatureNotVerified`. A relayer service for this is not yet implemented.
+- **Decision loop is not auto-scheduled.** The agent's decision loop logic (`runDecisionCycle`) is implemented but not triggered automatically — the agent server has no internal ticker. It must be invoked externally or wired to a scheduler.
+- **`recordAction` on-chain is not wired in the agent server.** The callback hook exists in the decision loop but has no concrete implementation in the server, so on-chain performance scoring requires the frontend wallet to call `recordAction` directly.
+- **0G Compute features require provider addresses.** `inferMarketRegime` (market regime classification) and TeeML signature verification require `ZG_INFERENCE_PROVIDER` and `ZG_MLDSA_VERIFY_PROVIDER` to be set; both are empty by default and the features are skipped.
+
+---
+
 ## Project Structure
 
 ```
@@ -271,10 +324,11 @@ spike/
 ├── apps/
 │   └── web/                    # Next.js 15 frontend
 ├── packages/
-│   ├── contracts/              # Solidity + Hardhat
-│   ├── pqc/                    # Dilithium3 + Kyber WASM wrappers
-│   ├── 0g-client/              # 0G Storage / Compute client
-│   └── agent/                  # Decision loop + REST API
+│   ├── contracts/              # Solidity 0.8.24 + Hardhat
+│   ├── pqc/                    # ML-DSA-65 + ML-KEM-1024 (@noble/post-quantum)
+│   ├── 0g-client/              # 0G Storage / KV / Compute client
+│   ├── agent/                  # Decision loop + REST API
+│   └── skills/                 # Skill markdown definitions
 ├── services/
 │   └── quantum/                # FastAPI + Qiskit Aer
 ├── .env.example
@@ -291,8 +345,8 @@ spike/
 |-------|-----------|
 | Frontend | Next.js 15, wagmi v2, viem, Tailwind CSS, Recharts, Framer Motion, Radix UI |
 | Agent | TypeScript, Express, Zod |
-| Quantum | Python 3.11, FastAPI, Qiskit 2.2, Qiskit Aer, qiskit-finance, scipy |
-| Cryptography | liboqs-js (Dilithium3, Kyber-1024), AES-256-GCM |
-| Blockchain | Solidity 0.8, Hardhat, ethers v6, TypeChain |
-| 0G SDK | @0gfoundation/0g-storage-ts-sdk v1.2.6, @0glabs/0g-serving-broker v0.7.4 |
+| Quantum | Python 3.11, FastAPI, Qiskit 2.2, Qiskit Aer, qiskit-algorithms, scipy |
+| Cryptography | `@noble/post-quantum` (ML-DSA-65, ML-KEM-1024), AES-256-GCM |
+| Blockchain | Solidity 0.8.24, Hardhat, ethers v6, ERC-721 |
+| 0G SDK | `@0gfoundation/0g-storage-ts-sdk` v1.2.6, `@0glabs/0g-serving-broker` v0.7.4 |
 | Tooling | pnpm workspaces, Turborepo, Docker |
