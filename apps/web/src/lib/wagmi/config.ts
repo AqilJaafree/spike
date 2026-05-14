@@ -21,6 +21,7 @@ export const zgMainnet = defineChain({
 });
 
 export const wagmiConfig: Config = createConfig({
+  ssr: true,
   chains: [zgTestnet, zgMainnet],
   connectors: [
     metaMask(),
