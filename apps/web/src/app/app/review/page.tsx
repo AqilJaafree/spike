@@ -105,11 +105,12 @@ export default function ReviewPage() {
         });
 
         if (!isReg) {
+          const storageRoot = keccak256(concat([dilithiumFpB32, kyberFpB32]));
           const pqcHash = await writeContractAsync({
             address: PQC_REGISTRY_ADDRESS,
             abi: PQC_REGISTRY_ABI,
             functionName: 'register',
-            args: [dilithiumFpB32, kyberFpB32, ZERO_B32],
+            args: [dilithiumFpB32, kyberFpB32, storageRoot],
           });
           setDeployStep(3);
           await waitForTransactionReceipt(wagmiConfig, { hash: pqcHash });

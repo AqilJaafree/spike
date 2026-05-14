@@ -34,3 +34,27 @@ export async function registerAgent(agentId: number, config: Partial<AgentConfig
   if (!res.ok) throw new Error('Failed to register agent');
   return res.json();
 }
+
+export type PendingAction = {
+  id: string;
+  actionHash: string;
+  txHash: string;
+  success: boolean;
+  pnlBps: number;
+  timestamp: string;
+  recorded: boolean;
+};
+
+export async function getPendingActions(agentId: number): Promise<PendingAction[]> {
+  const res = await fetch(`${AGENT_URL}/api/agent/actions/${agentId}`, { headers: agentHeaders() });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function ackAction(agentId: number, actionId: string): Promise<void> {
+  await fetch(`${AGENT_URL}/api/agent/action/${agentId}/ack`, {
+    method: 'POST',
+    headers: agentHeaders(),
+    body: JSON.stringify({ actionId }),
+  });
+}

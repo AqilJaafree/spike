@@ -9,7 +9,7 @@ import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
 import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI, AGENT_NFT_ADDRESS, AGENT_NFT_ABI } from '@/lib/contracts';
-import { pauseAgent, resumeAgent } from '@/lib/agent/client';
+import { pauseAgent, resumeAgent, getPendingActions, ackAction } from '@/lib/agent/client';
 
 interface Agent {
   id: number;
@@ -126,6 +126,52 @@ export default function DashboardPage() {
       .catch(() => null)
       .finally(() => setNftLoading(false));
   }, [address, activeAgent, agents]);
+
+  // Poll agent service for unrecorded actions and submit them on-chain.
+  useEffect(() => {
+    if (!address || !AGENT_REGISTRY_ADDRESS || agents.length === 0) return;
+    const agent = agents[activeAgent];
+    if (!agent) return;
+    const agentId = agent.id;
+
+    async function submitPending() {
+      const pending = await getPendingActions(agentId).catch(() => []);
+      for (const action of pending) {
+        try {
+          const hash = await writeContractAsync({
+            address: AGENT_REGISTRY_ADDRESS!,
+            abi: AGENT_REGISTRY_ABI,
+            functionName: 'recordAction',
+            args: [
+              BigInt(agentId),
+              action.actionHash as `0x${string}`,
+              action.success,
+              BigInt(action.pnlBps),
+            ],
+          });
+          await waitForTransactionReceipt(wagmiConfig, { hash });
+          await ackAction(agentId, action.id).catch(() => null);
+        } catch {
+          // Non-critical — will retry on next poll
+        }
+      }
+      if (pending.length > 0) {
+        // Refresh performance score after recording actions
+        readContract(wagmiConfig, {
+          address: AGENT_REGISTRY_ADDRESS!,
+          abi: AGENT_REGISTRY_ABI,
+          functionName: 'getPerformanceScore',
+          args: [BigInt(agentId)],
+        })
+          .then(perf => setPerfScore(perf as typeof perfScore))
+          .catch(() => null);
+      }
+    }
+
+    submitPending();
+    const timer = setInterval(submitPending, 30_000);
+    return () => clearInterval(timer);
+  }, [address, activeAgent, agents, writeContractAsync]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ visible: true, message, type });
