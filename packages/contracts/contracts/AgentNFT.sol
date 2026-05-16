@@ -40,6 +40,13 @@ contract AgentNFT is ERC721, ReentrancyGuard, IERC7857, IERC7857Metadata {
     /// @notice AgentRegistry implementing IPerformanceScorer for live tokenURI data.
     ///         Set to the same address as minter. address(0) = static URI.
     IPerformanceScorer public immutable scorer;
+    /// @notice Deployer — may call setBaseURI().
+    address            public immutable owner;
+
+    /// @notice When set, tokenURI returns baseURI + tokenId (HTTP) instead of a data: URI.
+    ///         Set to your frontend URL, e.g. "https://yourapp.com/api/nft/".
+    ///         Allows block explorers that don't support data: URIs to fetch metadata.
+    string public baseURI;
 
     mapping(uint256 => AgentMeta) private _meta;
 
@@ -90,6 +97,14 @@ contract AgentNFT is ERC721, ReentrancyGuard, IERC7857, IERC7857Metadata {
         mldsaVerifier = IMlDsaVerifier(verifierAddress);
         minter        = minterAddress;
         scorer        = IPerformanceScorer(scorerAddress);
+        owner         = msg.sender;
+    }
+
+    /// @notice Set the HTTP base URI for tokenURI. Only callable by the deployer.
+    ///         Must end with "/", e.g. "https://app.spike.ai/api/nft/".
+    function setBaseURI(string calldata uri) external {
+        require(msg.sender == owner, "AgentNFT: not owner");
+        baseURI = uri;
     }
 
     // ─── ERC-165 ──────────────────────────────────────────────────────────────
@@ -329,12 +344,16 @@ contract AgentNFT is ERC721, ReentrancyGuard, IERC7857, IERC7857Metadata {
         return _meta[tokenId];
     }
 
-    /// @notice Fully on-chain JSON data URI. Includes static PQC identity fields
-    ///         plus live performance score from AgentRegistry.
+    /// @notice Returns an HTTP URL when baseURI is set (explorer-compatible), otherwise
+    ///         falls back to a fully on-chain data: URI (no external dependency).
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         _requireOwned(tokenId);
-        AgentMeta memory m = _meta[tokenId];
 
+        if (bytes(baseURI).length > 0) {
+            return string(abi.encodePacked(baseURI, _toString(tokenId)));
+        }
+
+        AgentMeta memory m = _meta[tokenId];
         string memory perf = _buildPerfAttributes(tokenId);
 
         return string(abi.encodePacked(

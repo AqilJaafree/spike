@@ -31,7 +31,7 @@ export const wagmiConfig: Config = createConfig({
     coinbaseWallet({ appName: 'Spike' }),
   ] : [],
   transports: {
-    [zgTestnet.id]: http(),
-    [zgMainnet.id]: http(),
+    [zgTestnet.id]: http('https://evmrpc-testnet.0g.ai', { retryCount: 5, retryDelay: 1500 }),
+    [zgMainnet.id]: http('https://evmrpc.0g.ai',         { retryCount: 3, retryDelay: 1000 }),
   },
 });

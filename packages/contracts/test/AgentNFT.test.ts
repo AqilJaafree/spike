@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import { ethers } from 'hardhat';
+import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs';
 import type { PQCKeyRegistry, AgentRegistry, AgentNFT, TeeAttestationVerifier } from '../typechain-types';
 
 describe('AgentNFT', () => {
@@ -215,6 +216,180 @@ describe('AgentNFT', () => {
       await expect(
         agentNFT.connect(owner).authoriseTransfer(tokenId, recipient.address, badSigFp, 'no-tee')
       ).to.be.revertedWithCustomError(agentNFT, 'TransferNotAuthorised');
+    });
+  });
+
+  // ── ERC-7857 ─────────────────────────────────────────────────────────────────
+
+  describe('ERC-7857', () => {
+    const tokenId = 10n;
+
+    beforeEach(async () => {
+      await agentNFT.connect(attestor).mint(owner.address, tokenId, dilFp, configRoot, sigFp, skillKey);
+      await keyRegistry.connect(owner).register(dilFp, kyberFp, ethers.ZeroHash);
+      const recDilFp = ethers.keccak256(ethers.toUtf8Bytes('recipient-dil'));
+      const recKybFp = ethers.keccak256(ethers.toUtf8Bytes('recipient-kyb'));
+      await keyRegistry.connect(recipient).register(recDilFp, recKybFp, ethers.ZeroHash);
+    });
+
+    describe('supportsInterface', () => {
+      it('supports ERC-165 (0x01ffc9a7)', async () => {
+        expect(await agentNFT.supportsInterface('0x01ffc9a7')).to.be.true;
+      });
+
+      it('supports ERC-721 (0x80ac58cd)', async () => {
+        expect(await agentNFT.supportsInterface('0x80ac58cd')).to.be.true;
+      });
+
+      it('returns false for unknown interface', async () => {
+        expect(await agentNFT.supportsInterface('0xdeadbeef')).to.be.false;
+      });
+    });
+
+    describe('intelligentDataOf', () => {
+      it('returns 3 entries with correct descriptions and hashes', async () => {
+        const data = await agentNFT.intelligentDataOf(tokenId);
+        expect(data).to.have.length(3);
+        expect(data[0].dataDescription).to.equal('encrypted_config');
+        expect(data[0].dataHash).to.equal(configRoot);
+        expect(data[1].dataDescription).to.equal('dilithium_fingerprint');
+        expect(data[1].dataHash).to.equal(dilFp);
+        expect(data[2].dataDescription).to.equal('skill_key');
+        expect(data[2].dataHash).to.equal(skillKey);
+      });
+
+      it('reverts for non-existent token', async () => {
+        await expect(agentNFT.intelligentDataOf(999n)).to.be.reverted;
+      });
+    });
+
+    describe('authorizeUsage / revokeAuthorization / authorizedUsersOf', () => {
+      it('owner can authorize a user', async () => {
+        await agentNFT.connect(owner).authorizeUsage(tokenId, stranger.address);
+        const users = await agentNFT.authorizedUsersOf(tokenId);
+        expect(users).to.include(stranger.address);
+      });
+
+      it('emits Authorization event', async () => {
+        await expect(agentNFT.connect(owner).authorizeUsage(tokenId, stranger.address))
+          .to.emit(agentNFT, 'Authorization')
+          .withArgs(owner.address, stranger.address, tokenId);
+      });
+
+      it('duplicate authorizeUsage does not add user twice', async () => {
+        await agentNFT.connect(owner).authorizeUsage(tokenId, stranger.address);
+        await agentNFT.connect(owner).authorizeUsage(tokenId, stranger.address);
+        const users = await agentNFT.authorizedUsersOf(tokenId);
+        expect(users.filter((u: string) => u === stranger.address)).to.have.length(1);
+      });
+
+      it('owner can revoke a user', async () => {
+        await agentNFT.connect(owner).authorizeUsage(tokenId, stranger.address);
+        await agentNFT.connect(owner).revokeAuthorization(tokenId, stranger.address);
+        const users = await agentNFT.authorizedUsersOf(tokenId);
+        expect(users).to.not.include(stranger.address);
+      });
+
+      it('emits AuthorizationRevoked event', async () => {
+        await agentNFT.connect(owner).authorizeUsage(tokenId, stranger.address);
+        await expect(agentNFT.connect(owner).revokeAuthorization(tokenId, stranger.address))
+          .to.emit(agentNFT, 'AuthorizationRevoked')
+          .withArgs(owner.address, stranger.address, tokenId);
+      });
+
+      it('non-owner cannot authorize', async () => {
+        await expect(
+          agentNFT.connect(stranger).authorizeUsage(tokenId, stranger.address)
+        ).to.be.revertedWithCustomError(agentNFT, 'TransferNotAuthorised');
+      });
+    });
+
+    describe('delegateAccess / getDelegateAccess', () => {
+      it('owner can set a delegate', async () => {
+        await agentNFT.connect(owner).delegateAccess(stranger.address);
+        expect(await agentNFT.getDelegateAccess(owner.address)).to.equal(stranger.address);
+      });
+
+      it('emits DelegateAccess event', async () => {
+        await expect(agentNFT.connect(owner).delegateAccess(stranger.address))
+          .to.emit(agentNFT, 'DelegateAccess')
+          .withArgs(owner.address, stranger.address);
+      });
+
+      it('returns zero address for unset delegate', async () => {
+        expect(await agentNFT.getDelegateAccess(stranger.address)).to.equal(ethers.ZeroAddress);
+      });
+    });
+
+    describe('verifier', () => {
+      it('returns address(0) — proofs verified off-chain via 0G', async () => {
+        expect(await agentNFT.verifier()).to.equal(ethers.ZeroAddress);
+      });
+    });
+
+    describe('iTransfer', () => {
+      it('transfers token to PQC-registered recipient with empty proofs', async () => {
+        await agentNFT.connect(owner).iTransfer(recipient.address, tokenId, []);
+        expect(await agentNFT.ownerOf(tokenId)).to.equal(recipient.address);
+      });
+
+      it('emits Transferred event', async () => {
+        await expect(agentNFT.connect(owner).iTransfer(recipient.address, tokenId, []))
+          .to.emit(agentNFT, 'Transferred')
+          .withArgs(tokenId, owner.address, recipient.address);
+      });
+
+      it('reverts when recipient has no PQC keys', async () => {
+        await expect(
+          agentNFT.connect(owner).iTransfer(stranger.address, tokenId, [])
+        ).to.be.revertedWithCustomError(agentNFT, 'RecipientLacksQPCKeys');
+      });
+
+      it('reverts when caller is not owner or approved', async () => {
+        await expect(
+          agentNFT.connect(stranger).iTransfer(recipient.address, tokenId, [])
+        ).to.be.revertedWithCustomError(agentNFT, 'TransferNotAuthorised');
+      });
+    });
+
+    describe('iClone', () => {
+      it('mints clone for PQC-registered recipient sharing configRoot; original unchanged', async () => {
+        const cloneId = await agentNFT.connect(owner).iClone.staticCall(recipient.address, tokenId, []);
+        await agentNFT.connect(owner).iClone(recipient.address, tokenId, []);
+
+        expect(await agentNFT.ownerOf(cloneId)).to.equal(recipient.address);
+        expect(await agentNFT.ownerOf(tokenId)).to.equal(owner.address);
+
+        const m = await agentNFT.getAgentMeta(cloneId);
+        expect(m.configRoot).to.equal(configRoot);
+        expect(m.dilithiumFingerprint).to.equal(dilFp);
+        expect(m.skillKey).to.equal(skillKey);
+      });
+
+      it('clone ID is in max/2 range', async () => {
+        const cloneId = await agentNFT.connect(owner).iClone.staticCall(recipient.address, tokenId, []);
+        const base = (2n ** 256n - 1n) / 2n;
+        expect(cloneId).to.be.gte(base + 1n);
+      });
+
+      it('emits Cloned event', async () => {
+        const cloneId = await agentNFT.connect(owner).iClone.staticCall(recipient.address, tokenId, []);
+        await expect(agentNFT.connect(owner).iClone(recipient.address, tokenId, []))
+          .to.emit(agentNFT, 'Cloned')
+          .withArgs(tokenId, cloneId, owner.address, recipient.address);
+      });
+
+      it('reverts when recipient has no PQC keys', async () => {
+        await expect(
+          agentNFT.connect(owner).iClone(stranger.address, tokenId, [])
+        ).to.be.revertedWithCustomError(agentNFT, 'RecipientLacksQPCKeys');
+      });
+
+      it('reverts when caller is not token owner', async () => {
+        await expect(
+          agentNFT.connect(stranger).iClone(recipient.address, tokenId, [])
+        ).to.be.revertedWithCustomError(agentNFT, 'TransferNotAuthorised');
+      });
     });
   });
 

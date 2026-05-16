@@ -1,0 +1,16 @@
+name = "spike-agent"
+main = "src/worker.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "AGENTS"
+id = "9c4438cd717a4ef6a1c6022ffd10efab"
+preview_id = "99dac5b0fa504d5e9f0db3df79bde3e4"
+
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Set these via `wrangler secret put <NAME>` — never commit real values
+# AGENT_API_KEY    — shared secret the frontend sends as x-agent-api-key
+# QUANTUM_URL      — public URL of your quantum optimizer service

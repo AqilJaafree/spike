@@ -1,12 +1,10 @@
 {
   "network": "testnet",
   "chainId": "16602",
-  "PQCKeyRegistry": "0xa7e58D52e99AB7bC2F3B98475AF2BF8a8B3F97b2",
-  "TeeAttestationVerifier": "0x1922B98277A5eC6201B935386229367Dc4bF16b6",
-  "SkillRegistry": "0x659f6969c383bFD0890830c4BF475B602524Eb3C",
-  "AgentNFT": "0x004e706ffA544aEfDd85239cE995877e1c329F49",
-  "AgentRegistry": "0x0b57c343464f20C9ee7E3dEC9dd42E1254a08060",
-  "deployedAt": "2026-05-13T16:47:09.460Z",
-  "redeployedAt": "2026-05-16T08:34:07.001Z",
-  "note": "verifier=address(0) — attestation check disabled"
+  "PQCKeyRegistry": "0x9739C9490417bdC8A9cBB1229b272846D2399eaA",
+  "TeeAttestationVerifier": "0x5DD15972468F83192BB865274650c5E23C17312A",
+  "SkillRegistry": "0xb45a4C2E5A5d74cEada38b6e3B6D9B7fF8610A8B",
+  "AgentNFT": "0x89dAA595A827e728c2E0e5C6fd18615ab5Dc4dAa",
+  "AgentRegistry": "0x5dC7A32468Ed68E0a4519810C2AE355780fBA919",
+  "deployedAt": "2026-05-16T12:05:57.866Z"
 }

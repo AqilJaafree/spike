@@ -174,6 +174,38 @@ router.post('/register', (req, res) => {
   res.json({ success: true, agentId });
 });
 
+const UpdateConfigSchema = z.object({
+  config: z.object({
+    riskLevel: z.enum(['conservative', 'balanced', 'aggressive']),
+    assets: z.array(z.string()).min(2).max(10),
+    targetApy: z.number(),
+    maxDrawdown: z.number(),
+    rebalanceFrequency: z.enum(['daily', 'weekly', 'on-drift']),
+    qrngSeedingEnabled: z.boolean(),
+    driftThreshold: z.number(),
+  }),
+  dilithiumSk: z.string().optional(),
+});
+
+// PATCH /config/:agentId — update config and restart loop without resetting history
+router.patch('/config/:agentId', (req, res) => {
+  const id = parseInt(req.params.agentId);
+  const agent = agents.get(id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const parsed = UpdateConfigSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { config, dilithiumSk } = parsed.data;
+
+  stopAgentLoop(id);
+  agent.config = config;
+  if (dilithiumSk) agent.dilithiumSk = dilithiumSk;
+  agent.lastAction = new Date().toISOString();
+  persist();
+  startAgentLoop(id, schedulerCallbacks);
+  appendAuditLog({ agentId: id, timestamp: Date.now(), actionType: 'config-update', attested: false, details: { riskLevel: config.riskLevel, assets: config.assets } }).catch(() => null);
+  res.json({ success: true });
+});
+
 router.get('/audit/:agentId', async (req, res) => {
   const id = parseInt(req.params.agentId);
   try {

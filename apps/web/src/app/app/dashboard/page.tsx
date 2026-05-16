@@ -120,7 +120,10 @@ export default function DashboardPage() {
           value: '$0',
         })));
         const idx = storedId ? agentIds.findIndex(id => id.toString() === storedId) : -1;
-        setActiveAgent(idx >= 0 ? idx : agentIds.length - 1);
+        const resolvedIdx = idx >= 0 ? idx : agentIds.length - 1;
+        setActiveAgent(resolvedIdx);
+        // Keep sessionStorage in sync with on-chain truth so update-strategy uses the right ID
+        sessionStorage.setItem('spike_agent_id', agentIds[resolvedIdx].toString());
       })
       .catch(() => null)
       .finally(() => setAgentsLoading(false));

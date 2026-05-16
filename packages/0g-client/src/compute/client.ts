@@ -1,12 +1,19 @@
-import { createZGComputeNetworkBroker } from '@0glabs/0g-serving-broker';
 import OpenAI from 'openai';
 import type { Signer } from 'ethers';
 import type { MarketRegime } from '../types.js';
 
 const INFERENCE_PROVIDER = process.env.ZG_INFERENCE_PROVIDER ?? '';
 
+// Lazy import — only resolved when ZG_INFERENCE_PROVIDER is actually set.
+// The static ESM re-export chain in @0glabs/0g-serving-broker triggers a
+// Node.js linker error under tsx; deferring to dynamic import avoids it.
+async function loadBroker() {
+  const { createZGComputeNetworkBroker } = await import('@0glabs/0g-serving-broker');
+  return createZGComputeNetworkBroker;
+}
+
 export async function createBroker(signer: Signer) {
-  // Contract addresses are auto-detected from chain ID in the signer's provider
+  const createZGComputeNetworkBroker = await loadBroker();
   return createZGComputeNetworkBroker(signer as any);
 }
 

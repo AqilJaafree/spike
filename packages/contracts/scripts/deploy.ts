@@ -93,6 +93,19 @@ async function main() {
   }
   console.log('Address prediction verified.');
 
+  // ── Set NFT base URI (optional — requires APP_URL env var) ─────────────────
+  // Allows chainscan-galileo and other explorers to fetch metadata via HTTP
+  // instead of getting a data: URI they can't resolve.
+  const appUrl = process.env.APP_URL?.replace(/\/$/, '');
+  if (appUrl) {
+    const baseURI = `${appUrl}/api/nft/`;
+    const tx = await (agentNFT as any).setBaseURI(baseURI);
+    await tx.wait();
+    console.log('AgentNFT.setBaseURI:', baseURI);
+  } else {
+    console.log('APP_URL not set — skipping setBaseURI (tokenURI returns data: URI)');
+  }
+
   // ── Save manifest ───────────────────────────────────────────────────────────
   const network = await ethers.provider.getNetwork();
   const addresses = {

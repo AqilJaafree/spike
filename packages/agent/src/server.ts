@@ -1,3 +1,8 @@
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'path';
+// Load root .env (two levels up from packages/agent). Safe to call before any env reads.
+loadEnv({ path: resolve(process.cwd(), '../../.env') });
+
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { router } from './routes/index.js';

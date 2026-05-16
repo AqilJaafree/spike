@@ -1,4 +1,3 @@
-import { createZGComputeNetworkBroker } from '@0glabs/0g-serving-broker';
 import OpenAI from 'openai';
 import type { Signer } from 'ethers';
 import type { TeeVerifyResult } from '../types.js';
@@ -36,6 +35,7 @@ export async function submitMlDsaVerifyToTee(
   if (!MLDSA_VERIFY_PROVIDER) return null;
 
   try {
+    const { createZGComputeNetworkBroker } = await import('@0glabs/0g-serving-broker');
     const broker = await createZGComputeNetworkBroker(signer as any);
     const { endpoint, model } = await broker.inference.getServiceMetadata(MLDSA_VERIFY_PROVIDER);
 

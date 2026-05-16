@@ -3,20 +3,19 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useWriteContract } from 'wagmi';
-import { getWalletClient, readContract, waitForTransactionReceipt } from '@wagmi/core';
+import { readContract, waitForTransactionReceipt, type WaitForTransactionReceiptParameters } from '@wagmi/core';
+import { TransactionReceiptNotFoundError } from 'viem';
 import { Btn, Card, SectionLabel, Row } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
-import { uploadAgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
-import { walletClientToSigner } from '@/lib/wagmi/ethers';
 import { keccak256, concat, toBytes } from 'viem';
 import {
   PQC_REGISTRY_ADDRESS, AGENT_REGISTRY_ADDRESS,
   PQC_REGISTRY_ABI, AGENT_REGISTRY_ABI,
   fingerprintToBytes32, configToBytes32, parseAgentIdFromReceipt,
 } from '@/lib/contracts';
-import { registerAgent } from '@/lib/agent/client';
+import { registerAgent, updateAgentConfig } from '@/lib/agent/client';
 import type { OptimizeResult } from '@/lib/quantum/client';
 
 const DEPLOY_STEPS = [
@@ -47,6 +46,27 @@ const SKILL_NAMES: Record<string, string> = {
 const ZERO_B32 = `0x${'0'.repeat(64)}` as `0x${string}`;
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
+// 0G testnet RPC sometimes returns a new block number before the tx is indexed.
+// Retry on TransactionReceiptNotFoundError with backoff before giving up.
+async function waitForReceipt(
+  cfg: typeof wagmiConfig,
+  params: WaitForTransactionReceiptParameters,
+  maxRetries = 8,
+) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await waitForTransactionReceipt(cfg, { pollingInterval: 3000, ...params });
+    } catch (err) {
+      if (err instanceof TransactionReceiptNotFoundError && attempt < maxRetries) {
+        await delay(2000 * (attempt + 1));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Transaction not confirmed after maximum retries');
+}
+
 export default function ReviewPage() {
   const router = useRouter();
   const { address } = useAccount();
@@ -61,11 +81,12 @@ export default function ReviewPage() {
   const [deployError, setDeployError] = useState<string | null>(null);
   const [isUpdate, setIsUpdate] = useState(false);
   const [storageUploaded, setStorageUploaded] = useState(false);
+  const [agentServiceWarning, setAgentServiceWarning] = useState<string | null>(null);
 
   useEffect(() => {
     const raw = sessionStorage.getItem('spike_agent_config');
     if (raw) setConfig(JSON.parse(raw));
-    else setConfig({ riskLevel: 'balanced', assets: ['ETH', 'BTC', 'SOL', 'USDC'], targetApy: 12, rebalanceFrequency: 'weekly', qrngSeedingEnabled: true, maxDrawdown: 15 });
+    else setConfig({ riskLevel: 'balanced', assets: ['ETH', 'BTC', 'SOL', 'USDC'], targetApy: 12, rebalanceFrequency: 'weekly', qrngSeedingEnabled: true, maxDrawdown: 15, driftThreshold: 5 });
 
     const opt = sessionStorage.getItem('spike_optimization_result');
     if (opt) setOptimization(JSON.parse(opt));
@@ -78,6 +99,10 @@ export default function ReviewPage() {
 
   async function handleDeploy() {
     if (!config) return;
+    setDeploying(true);
+    setDeployError(null);
+    setDeployStep(-1);
+
     if (!address) {
       setDeployError('Wallet not connected. Please connect your wallet and try again.');
       return;
@@ -86,9 +111,6 @@ export default function ReviewPage() {
       setDeployError('Contract address not configured. Check NEXT_PUBLIC_AGENT_REGISTRY in .env.local.');
       return;
     }
-    setDeploying(true);
-    setDeployError(null);
-    setDeployStep(-1);
 
     try {
       // Step 1 — upload config to 0G Storage; fall back to local hash if unavailable
@@ -96,15 +118,20 @@ export default function ReviewPage() {
       const skillKeyB32 = (sessionStorage.getItem('spike_skill_key') as `0x${string}`) ?? ZERO_B32;
       let configRoot: `0x${string}`;
       try {
-        const walletClient = await getWalletClient(wagmiConfig, { chainId: 16602 });
-        if (!walletClient) throw new Error('no wallet client');
-        const signer = await walletClientToSigner(walletClient);
-        const ref = await uploadAgentConfig(config as AgentConfig, signer);
-        configRoot = fingerprintToBytes32(ref.rootHash);
-        sessionStorage.setItem('spike_storage_root', ref.rootHash);
+        // Upload via Next.js API route — the 0G storage SDK is Node.js-only
+        // and cannot run in the browser, so the server proxies it.
+        const res = await fetch('/api/storage/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const { rootHash } = await res.json() as { rootHash: string };
+        configRoot = fingerprintToBytes32(rootHash);
+        sessionStorage.setItem('spike_storage_root', rootHash);
         setStorageUploaded(true);
       } catch {
-        // 0G Storage unreachable or insufficient balance — hash locally
+        // STORAGE_PRIVATE_KEY not set or 0G Storage unreachable — hash locally
         configRoot = configToBytes32(config);
         setStorageUploaded(false);
       }
@@ -128,10 +155,27 @@ export default function ReviewPage() {
       // Steps 3 & 4 — on-chain registration or update
       setDeployStep(2);
       const existingAgentIdStr = sessionStorage.getItem('spike_agent_id');
-      const isUpdateMode = !!(sessionStorage.getItem('spike_deployed') && existingAgentIdStr);
-      let agentId = isUpdateMode && existingAgentIdStr ? parseInt(existingAgentIdStr) : 1;
+      let agentId = existingAgentIdStr ? parseInt(existingAgentIdStr) : 1;
 
-      if (isUpdateMode) {
+      // Verify the cached agent still exists on-chain and is owned by us.
+      // It may be gone if contracts were redeployed after the last session.
+      let agentExistsOnChain = false;
+      if (sessionStorage.getItem('spike_deployed') && existingAgentIdStr) {
+        try {
+          const onChain = await readContract(wagmiConfig, {
+            address: AGENT_REGISTRY_ADDRESS,
+            abi: AGENT_REGISTRY_ABI,
+            functionName: 'getAgent',
+            args: [BigInt(agentId)],
+            chainId: 16602,
+          }) as { owner: string };
+          agentExistsOnChain = onChain.owner.toLowerCase() === address.toLowerCase();
+        } catch {
+          // getAgent reverted — agent definitely gone
+        }
+      }
+
+      if (agentExistsOnChain) {
         const updateHash = await writeContractAsync({
           address: AGENT_REGISTRY_ADDRESS,
           abi: AGENT_REGISTRY_ABI,
@@ -140,8 +184,11 @@ export default function ReviewPage() {
           args: [BigInt(agentId), configRoot, actionSigFingerprintB32],
         });
         setDeployStep(3);
-        await waitForTransactionReceipt(wagmiConfig, { hash: updateHash });
+        await waitForReceipt(wagmiConfig, { hash: updateHash });
       } else {
+        // Agent not found on-chain (first deploy, or stale session after contract redeploy)
+        sessionStorage.removeItem('spike_deployed');
+        sessionStorage.removeItem('spike_agent_id');
         if (PQC_REGISTRY_ADDRESS) {
           const isReg = await readContract(wagmiConfig, {
             address: PQC_REGISTRY_ADDRESS,
@@ -162,7 +209,7 @@ export default function ReviewPage() {
               args: [dilithiumFpB32, kyberFpB32, storageRoot],
             });
             setDeployStep(3);
-            await waitForTransactionReceipt(wagmiConfig, { hash: pqcHash });
+            await waitForReceipt(wagmiConfig, { hash: pqcHash });
           } else {
             setDeployStep(3);
             await delay(300);
@@ -179,27 +226,33 @@ export default function ReviewPage() {
           chainId: 16602,
           args: [configRoot, actionSigFingerprintB32, ZERO_B32, skillKeyB32],
         });
-        const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: agentHash });
+        const receipt = await waitForReceipt(wagmiConfig, { hash: agentHash });
         const parsed = parseAgentIdFromReceipt(receipt);
         if (parsed !== null) agentId = Number(parsed);
       }
 
       sessionStorage.setItem('spike_agent_id', String(agentId));
 
-      // Step 5 — register with local agent service; pass Dilithium SK so it can sign actions
+      // Step 5 — sync config with local agent service
       setDeployStep(4);
       try {
         const dilithiumSk = sessionStorage.getItem('spike_dilithium_sk') ?? undefined;
-        await registerAgent(agentId, config, dilithiumSk);
+        if (agentExistsOnChain) {
+          await updateAgentConfig(agentId, config, dilithiumSk);
+        } else {
+          await registerAgent(agentId, config, dilithiumSk);
+        }
       } catch {
-        // Non-critical if agent service is offline
+        // Agent service offline — bot will use old config until service is restarted
+        setAgentServiceWarning('Agent service unreachable. The on-chain update succeeded, but restart the agent service to apply the new config.');
       }
       await delay(400);
 
       setDeployed(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Deployment failed';
-      setDeployError(msg.length > 120 ? msg.slice(0, 120) + '…' : msg);
+      console.error('[review] deploy/update failed:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setDeployError(msg || 'Deployment failed');
       setDeploying(false);
       setDeployStep(-1);
     }
@@ -335,10 +388,15 @@ export default function ReviewPage() {
                   {isUpdate ? 'Your agent is now running with the new configuration.' : 'Spike is now watching the market and managing your portfolio automatically.'}
                 </div>
                 {!isUpdate && (
-                  <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: storageUploaded ? '#2d6a4f' : '#A8A49E', background: '#D9E4DD', borderRadius: 10, padding: '8px 12px', marginBottom: 20, textAlign: 'left' }}>
+                  <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: storageUploaded ? '#2d6a4f' : '#A8A49E', background: '#D9E4DD', borderRadius: 10, padding: '8px 12px', marginBottom: 16, textAlign: 'left' }}>
                     {storageUploaded
                       ? `0G Storage ✓  ${(sessionStorage.getItem('spike_storage_root') ?? '').slice(0, 18)}…`
                       : '0G Storage unavailable — local config hash used'}
+                  </div>
+                )}
+                {agentServiceWarning && (
+                  <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffe69c', borderRadius: 10, padding: '10px 14px', marginBottom: 16, textAlign: 'left', lineHeight: 1.5 }}>
+                    ⚠️ {agentServiceWarning}
                   </div>
                 )}
                 <Btn size="lg" style={{ width: '100%' }} onClick={handleGoToDashboard}>Go to my portfolio →</Btn>
@@ -347,7 +405,7 @@ export default function ReviewPage() {
               <>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
                 <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 20, color: '#555555', marginBottom: 10 }}>Deployment failed</div>
-                <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#842029', background: '#f8d7da', borderRadius: 10, padding: '10px 14px', marginBottom: 20, textAlign: 'left', lineHeight: 1.5 }}>{deployError}</div>
+                <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#842029', background: '#f8d7da', borderRadius: 10, padding: '10px 14px', marginBottom: 20, textAlign: 'left', lineHeight: 1.5, maxHeight: 160, overflowY: 'auto', wordBreak: 'break-word' }}>{deployError}</div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setDeploying(false); setDeployError(null); }}>Cancel</Btn>
                   <Btn style={{ flex: 1 }} onClick={handleDeploy}>Retry</Btn>
@@ -355,7 +413,7 @@ export default function ReviewPage() {
               </>
             ) : (
               <>
-                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 22, color: '#555555', marginBottom: 24 }}>Starting your bot…</div>
+                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 22, color: '#555555', marginBottom: 24 }}>{isUpdate ? 'Updating strategy…' : 'Starting your bot…'}</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24, textAlign: 'left' }}>
                   {(isUpdate ? UPDATE_STEPS : DEPLOY_STEPS).map((s, i) => (
                     <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

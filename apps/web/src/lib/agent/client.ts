@@ -29,6 +29,16 @@ export async function registerAgent(agentId: number, config: Partial<AgentConfig
   return res.json();
 }
 
+export async function updateAgentConfig(agentId: number, config: Partial<AgentConfig>, dilithiumSk?: string) {
+  const res = await fetch(`${AGENT_URL}/api/agent/config/${agentId}`, {
+    method: 'PATCH',
+    headers: agentHeaders(),
+    body: JSON.stringify({ config, dilithiumSk }),
+  });
+  if (!res.ok) throw new Error('Failed to update agent config');
+  return res.json();
+}
+
 export type PendingAction = {
   id: string;
   actionHash: string;

@@ -1,4 +1,4 @@
-import { keccak256 } from 'viem';
+import { keccak256, toEventSelector } from 'viem';
 
 export const PQC_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_PQC_KEY_REGISTRY as `0x${string}` | undefined;
 export const AGENT_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_AGENT_REGISTRY as `0x${string}` | undefined;
@@ -395,13 +395,20 @@ export function configToBytes32(config: unknown): `0x${string}` {
   return keccak256(new TextEncoder().encode(JSON.stringify(config)));
 }
 
+// keccak256("AgentDeployed(uint256,address,bytes32,bytes32,bytes32)")
+const AGENT_DEPLOYED_SIG = toEventSelector('AgentDeployed(uint256,address,bytes32,bytes32,bytes32)');
+
 export function parseAgentIdFromReceipt(
   receipt: { logs: Array<{ address: string; topics: readonly string[] }> }
 ): bigint | null {
   const addr = AGENT_REGISTRY_ADDRESS?.toLowerCase();
   if (!addr) return null;
   for (const log of receipt.logs) {
-    if (log.address.toLowerCase() === addr && log.topics.length >= 2) {
+    if (
+      log.address.toLowerCase() === addr &&
+      log.topics[0]?.toLowerCase() === AGENT_DEPLOYED_SIG.toLowerCase() &&
+      log.topics.length >= 2
+    ) {
       return BigInt(log.topics[1]);
     }
   }
