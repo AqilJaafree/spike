@@ -5,10 +5,14 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  # Pre-filled public values — no secrets here
-  NEXT_PUBLIC_PQC_KEY_REGISTRY = "0x300Fa0Af86201A410bEBD511Ca7FB81548a0f027"
-  NEXT_PUBLIC_AGENT_REGISTRY   = "0x5bBE9D2735EEfDF453f71fe3f2bcD3E1cb8CB8B0"
-  NEXT_PUBLIC_ZG_NETWORK       = "testnet"
+  NEXT_PUBLIC_ZG_NETWORK            = "testnet"
+  NEXT_PUBLIC_PQC_KEY_REGISTRY      = "0x9739C9490417bdC8A9cBB1229b272846D2399eaA"
+  NEXT_PUBLIC_TEE_VERIFIER          = "0x5DD15972468F83192BB865274650c5E23C17312A"
+  NEXT_PUBLIC_SKILL_REGISTRY        = "0xb45a4C2E5A5d74cEada38b6e3B6D9B7fF8610A8B"
+  NEXT_PUBLIC_AGENT_NFT             = "0x89dAA595A827e728c2E0e5C6fd18615ab5Dc4dAa"
+  NEXT_PUBLIC_AGENT_REGISTRY        = "0x5dC7A32468Ed68E0a4519810C2AE355780fBA919"
+  NEXT_PUBLIC_AGENT_URL             = "https://spike-agent.wanaqilre.workers.dev"
+  NEXT_PUBLIC_QUANTUM_URL           = "https://quantum-production-f28b.up.railway.app"
 
 # Serve WebAssembly with the correct content-type
 [[headers]]
