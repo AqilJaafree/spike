@@ -53,6 +53,66 @@ https://github.com/user-attachments/assets/0ee7435e-5cec-4931-902c-21ffd1050f1b
 
 ---
 
+## Smart Contracts
+
+### Deployed — 0G Testnet (Chain ID 16602)
+
+> Deployed 2026-05-16. If you redeploy, update all addresses in `.env` and `netlify.toml`.
+
+| Contract | Address |
+|----------|---------|
+| `PQCKeyRegistry` | [`0x9739C9490417bdC8A9cBB1229b272846D2399eaA`](https://chainscan-galileo.0g.ai/address/0x9739C9490417bdC8A9cBB1229b272846D2399eaA#code) |
+| `TeeAttestationVerifier` | [`0x5DD15972468F83192BB865274650c5E23C17312A`](https://chainscan-galileo.0g.ai/address/0x5DD15972468F83192BB865274650c5E23C17312A#code) |
+| `SkillRegistry` | [`0xb45a4C2E5A5d74cEada38b6e3B6D9B7fF8610A8B`](https://chainscan-galileo.0g.ai/address/0xb45a4C2E5A5d74cEada38b6e3B6D9B7fF8610A8B#code) |
+| `AgentNFT` | [`0x89dAA595A827e728c2E0e5C6fd18615ab5Dc4dAa`](https://chainscan-galileo.0g.ai/address/0x89dAA595A827e728c2E0e5C6fd18615ab5Dc4dAa#code) |
+| `AgentRegistry` | [`0x5dC7A32468Ed68E0a4519810C2AE355780fBA919`](https://chainscan-galileo.0g.ai/address/0x5dC7A32468Ed68E0a4519810C2AE355780fBA919#code) |
+
+### Contract Summaries
+
+**`PQCKeyRegistry`** — stores ML-DSA-65 and ML-KEM-1024 public key fingerprints per wallet.
+```
+register(dilithiumFp, kyberFp, storageRoot)
+rotate(dilithiumFp, kyberFp, storageRoot)
+revoke()
+getKeys(address) → (dilithiumFp, kyberFp, storageRoot, timestamp)
+isRegistered(address) → bool
+```
+
+**`TeeAttestationVerifier`** — stores Intel TDX TEE attestation proofs. `AgentRegistry` calls `isVerified` before allowing `deployAgent`. An off-chain attestor must call `registerVerification` with the user's signature fingerprints before the user can deploy.
+```
+registerVerification(pubkeyFp, configRoot, actionSigFp)
+isVerified(pubkeyFp, configRoot, actionSigFp) → bool
+```
+
+**`SkillRegistry`** — on-chain catalog of approved DeFi skills (Ownable).
+```
+getAllSkills() → Skill[]
+getSkill(skillKey) → Skill
+isActive(skillKey) → bool
+skillCount() → uint256
+```
+
+**`AgentNFT`** — ERC-721 with PQC-gated transfers and live `tokenURI` sourcing performance data from `AgentRegistry`.
+```
+getAgentMeta(tokenId) → (owner, dilithiumFp, skillKey, mintedAt)
+ownerOf(tokenId) → address
+tokenURI(tokenId) → string  // live JSON with performance data
+```
+
+**`AgentRegistry`** — agent lifecycle, performance scoring, wires all four contracts.
+```
+deployAgent(configRoot, actionSigFingerprint, attestationId, skillKey) → agentId
+pauseAgent(agentId)
+resumeAgent(agentId)
+withdrawAgent(agentId)
+updateConfig(agentId, newConfigRoot, dilithiumSig)
+recordAction(agentId, actionHash, txHash)
+getOwnerAgents(owner) → agentId[]
+getPerformanceScore(agentId) → (totalActions, successRate, pnlBps)
+```
+
+---
+
 ## Key Design Decisions
 
 ### Post-Quantum Cryptography
@@ -324,66 +384,6 @@ This runs all three in parallel. Logs from all services are interleaved and pref
 | GET | `/api/agent/status/:agentId` | Current agent state |
 | POST | `/api/agent/pause/:agentId` | Pause agent execution |
 | POST | `/api/agent/resume/:agentId` | Resume agent execution |
-
----
-
-## Smart Contracts
-
-### Deployed — 0G Testnet (Chain ID 16602)
-
-> Deployed 2026-05-16. If you redeploy, update all addresses in `.env` and `netlify.toml`.
-
-| Contract | Address |
-|----------|---------|
-| `PQCKeyRegistry` | `0x9739C9490417bdC8A9cBB1229b272846D2399eaA` |
-| `TeeAttestationVerifier` | `0x5DD15972468F83192BB865274650c5E23C17312A` |
-| `SkillRegistry` | `0xb45a4C2E5A5d74cEada38b6e3B6D9B7fF8610A8B` |
-| `AgentNFT` | `0x89dAA595A827e728c2E0e5C6fd18615ab5Dc4dAa` |
-| `AgentRegistry` | `0x5dC7A32468Ed68E0a4519810C2AE355780fBA919` |
-
-### Contract Summaries
-
-**`PQCKeyRegistry`** — stores ML-DSA-65 and ML-KEM-1024 public key fingerprints per wallet.
-```
-register(dilithiumFp, kyberFp, storageRoot)
-rotate(dilithiumFp, kyberFp, storageRoot)
-revoke()
-getKeys(address) → (dilithiumFp, kyberFp, storageRoot, timestamp)
-isRegistered(address) → bool
-```
-
-**`TeeAttestationVerifier`** — stores Intel TDX TEE attestation proofs. `AgentRegistry` calls `isVerified` before allowing `deployAgent`. An off-chain attestor must call `registerVerification` with the user's signature fingerprints before the user can deploy.
-```
-registerVerification(pubkeyFp, configRoot, actionSigFp)
-isVerified(pubkeyFp, configRoot, actionSigFp) → bool
-```
-
-**`SkillRegistry`** — on-chain catalog of approved DeFi skills (Ownable).
-```
-getAllSkills() → Skill[]
-getSkill(skillKey) → Skill
-isActive(skillKey) → bool
-skillCount() → uint256
-```
-
-**`AgentNFT`** — ERC-721 with PQC-gated transfers and live `tokenURI` sourcing performance data from `AgentRegistry`.
-```
-getAgentMeta(tokenId) → (owner, dilithiumFp, skillKey, mintedAt)
-ownerOf(tokenId) → address
-tokenURI(tokenId) → string  // live JSON with performance data
-```
-
-**`AgentRegistry`** — agent lifecycle, performance scoring, wires all four contracts.
-```
-deployAgent(configRoot, actionSigFingerprint, attestationId, skillKey) → agentId
-pauseAgent(agentId)
-resumeAgent(agentId)
-withdrawAgent(agentId)
-updateConfig(agentId, newConfigRoot, dilithiumSig)
-recordAction(agentId, actionHash, txHash)
-getOwnerAgents(owner) → agentId[]
-getPerformanceScore(agentId) → (totalActions, successRate, pnlBps)
-```
 
 ---
 
