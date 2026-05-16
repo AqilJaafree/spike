@@ -1,12 +1,21 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import optimize, rebalance, risk, health
 
 app = FastAPI(title="Spike Quantum Service", version="0.2.0")
 
+_extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://quantum-production-f28b.up.railway.app",
+        *_extra_origins,
+    ],
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
