@@ -18,7 +18,7 @@ async def run_portfolio_optimization(
         'weights': weights,
         'sharpe': sharpe,
         'frontier': frontier,
-        'backend_used': 'aer_simulator',
+        'backend_used': 'scipy_slsqp',
         'cached': False,
     }
 

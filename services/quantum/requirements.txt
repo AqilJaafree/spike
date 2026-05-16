@@ -1,14 +1,8 @@
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.0
-numpy==1.26.4
-scipy==1.13.0
-qiskit==2.2.0
-qiskit-aer==0.14.2
-qiskit-finance==0.4.0
-qiskit-algorithms==0.3.0
-qiskit-optimization==0.6.1
-mitiq==0.37.0
+numpy>=2.0.0
+scipy>=1.14.0
 python-dotenv==1.0.1
 httpx==0.27.0
 pytest==8.2.0

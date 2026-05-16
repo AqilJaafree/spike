@@ -2,7 +2,7 @@
 
 Quantum-safe, quantum-enhanced autonomous DeFi AI agent on [0G Network](https://0g.ai).
 
-Spike combines post-quantum cryptography (PQC), Qiskit-powered portfolio optimization, and 0G's decentralized storage + compute layers to deploy self-rebalancing on-chain agents whose configurations are Kyber-encrypted, Dilithium-signed, and stored on 0G Storage — never held in plaintext.
+Spike combines post-quantum cryptography (PQC), scipy-powered portfolio optimization, and 0G's decentralized storage + compute layers to deploy self-rebalancing on-chain agents whose configurations are Kyber-encrypted, Dilithium-signed, and stored on 0G Storage — never held in plaintext.
 
 ---
 https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
@@ -25,8 +25,8 @@ https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
 │  services/  │                    │  packages/0g-client      │
 │  quantum    │                    │  0G Storage upload/KV    │
 │  (FastAPI)  │                    │  0G Compute broker       │
-│  Qiskit Aer │                    │  QPU result cache (6hr)  │
-│  SLSQP + IAE│                    └──────────┬───────────────┘
+│  FastAPI    │                    │  QPU result cache (6hr)  │
+│  SLSQP      │                    └──────────┬───────────────┘
 └─────────────┘                               │
                            ┌──────────────────▼──────────────────┐
                            │  0G Chain (EVM, chainId 16602)       │
@@ -47,7 +47,7 @@ https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
 | `packages/0g-client` | 0G Storage SDK + 0G Compute broker, shared TypeScript types |
 | `packages/agent` | DeFi agent decision loop + Express REST API |
 | `packages/skills` | On-chain skill definitions (lp-provider, dca-strategy, lending-borrowing, sim-trade) |
-| `services/quantum` | FastAPI — Qiskit/Aer portfolio optimizer, VaR/CVaR risk sim, rebalancer |
+| `services/quantum` | FastAPI — scipy/SLSQP portfolio optimizer, Monte Carlo VaR/CVaR risk sim, rebalancer |
 | `apps/web` | Next.js 15 App Router frontend |
 
 ---
@@ -70,10 +70,10 @@ https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
 - `tokenURI` returns live performance metadata: total actions, success rate, PnL bps, sourced from `AgentRegistry`
 - PQC-gated transfers: the receiving wallet must have a registered PQC key
 
-### Quantum-Enhanced Optimization
-- `services/quantum` runs **Qiskit + Aer simulator** locally — no cloud account required
-- Portfolio weights use classical scipy Markowitz (SLSQP) with an efficient frontier calculation
-- VaR-95 / CVaR-99 are estimated via **Iterative Amplitude Estimation** (`StatevectorSampler`), falling back to Monte Carlo if the circuit fails
+### Portfolio Optimization
+- `services/quantum` runs **FastAPI + scipy** locally — no external service required
+- Portfolio weights use classical Markowitz (SLSQP) with an efficient frontier calculation
+- VaR-95 / CVaR-99 are estimated via Monte Carlo simulation (log-normal, 100k samples)
 - Rebalance trades are selected by a greedy cost-minimizing algorithm
 - Optimization results are cached in **0G Storage KV for 6 hours**, keyed by portfolio hash — the agent skips re-running if drift is below `driftThreshold`
 
@@ -90,7 +90,7 @@ https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
 |------|----------------|
 | Node.js | 18 |
 | pnpm | 9 |
-| Python | 3.11 |
+| Python | 3.11+ |
 | Docker | 24 (optional, for quantum service container) |
 
 ---
@@ -141,32 +141,82 @@ NEXT_PUBLIC_AGENT_REGISTRY=0x...
 
 > If deploying to Netlify, update all five addresses in `netlify.toml` under `[build.environment]` as well.
 
-### 4. Start the quantum service
+### 4. Start each service
 
-**Option A — Python directly:**
+The project has three services that must each run in their own terminal.
+
+---
+
+#### Terminal 1 — Portfolio optimizer (`http://localhost:8000`)
+
 ```bash
 cd services/quantum
-python -m venv .venv && source .venv/bin/activate
+
+# First time only: create venv and install deps
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+
+# Start (subsequent runs)
+source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
-**Option B — Docker:**
-```bash
-pnpm docker:quantum
-docker run -p 8000:8000 spike-quantum
+Expected output:
+```
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 ```
 
-### 5. Start all services
+Verify it's up:
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","backend":"scipy_slsqp","type":"classical"}
+```
+
+---
+
+#### Terminal 2 — Agent API (`http://localhost:3001`)
+
+```bash
+# From the repo root
+pnpm --filter @spike/agent dev
+```
+
+Expected output:
+```
+@spike/agent:dev: Agent API listening on :3001
+```
+
+The agent server manages per-agent decision loops. It polls CoinGecko prices, runs SLSQP optimization via the quantum service, checks drift, and queues `pendingActions` for the frontend to submit on-chain.
+
+---
+
+#### Terminal 3 — Next.js frontend (`http://localhost:3000`)
+
+```bash
+# From the repo root
+pnpm --filter @spike/web dev
+```
+
+Expected output:
+```
+@spike/web:dev: ▲ Next.js 15.x
+@spike/web:dev: - Local: http://localhost:3000
+```
+
+---
+
+#### All services at once (Turborepo)
+
+If you prefer a single terminal:
 
 ```bash
 pnpm dev
 ```
 
-This starts (in parallel via Turborepo):
-- Quantum service on `http://localhost:8000`
-- Agent API on `http://localhost:3001`
-- Next.js frontend on `http://localhost:3000`
+This runs all three in parallel. Logs from all services are interleaved and prefixed with the package name.
+
+> **Note:** The quantum service (`services/quantum`) is a Python project outside Turborepo's graph. Make sure its venv is activated and `uvicorn` is running before `pnpm dev`, or start it manually in a separate terminal.
 
 ---
 
@@ -190,7 +240,7 @@ This starts (in parallel via Turborepo):
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Returns `{ status, backend, type }` |
-| GET | `/supported-backends` | Lists available Aer backends |
+| GET | `/supported-backends` | Lists available optimizer backends |
 | POST | `/optimize` | Portfolio optimization — returns weights, Sharpe, efficient frontier |
 | POST | `/risk` | Risk simulation — returns VaR-95, CVaR-99, stress PnL scenarios |
 | POST | `/rebalance` | Rebalance optimizer — returns ranked trade candidates |
@@ -330,7 +380,7 @@ spike/
 │   ├── agent/                  # Decision loop + REST API
 │   └── skills/                 # Skill markdown definitions
 ├── services/
-│   └── quantum/                # FastAPI + Qiskit Aer
+│   └── quantum/                # FastAPI + scipy SLSQP
 ├── .env.example
 ├── pnpm-workspace.yaml
 ├── turbo.json
@@ -345,7 +395,7 @@ spike/
 |-------|-----------|
 | Frontend | Next.js 15, wagmi v2, viem, Tailwind CSS, Recharts, Framer Motion, Radix UI |
 | Agent | TypeScript, Express, Zod |
-| Quantum | Python 3.11, FastAPI, Qiskit 2.2, Qiskit Aer, qiskit-algorithms, scipy |
+| Optimizer | Python 3.11+, FastAPI, numpy, scipy (SLSQP, Monte Carlo) |
 | Cryptography | `@noble/post-quantum` (ML-DSA-65, ML-KEM-1024), AES-256-GCM |
 | Blockchain | Solidity 0.8.24, Hardhat, ethers v6, ERC-721 |
 | 0G SDK | `@0gfoundation/0g-storage-ts-sdk` v1.2.6, `@0glabs/0g-serving-broker` v0.7.4 |

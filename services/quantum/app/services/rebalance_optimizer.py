@@ -6,7 +6,7 @@ async def run_rebalance_optimization(
 ) -> dict:
     trades = _build_trade_candidates(current_weights, target_weights, price_data, max_trade_size)
     selected = _greedy_select(trades)
-    return {'selected_trades': selected, 'backend_used': 'aer_simulator'}
+    return {'selected_trades': selected, 'backend_used': 'scipy_greedy'}
 
 
 def _build_trade_candidates(current, target, prices, max_trade_size) -> list[dict]:
