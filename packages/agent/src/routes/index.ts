@@ -7,6 +7,7 @@ import { startAgentLoop, stopAgentLoop, type CycleResult } from '../market/sched
 export type PendingAction = {
   id: string;
   actionHash: string;
+  dilithiumSig?: string; // hex-encoded ML-DSA-65 signature of the action envelope
   txHash: string;
   success: boolean;
   pnlBps: number;
@@ -27,6 +28,7 @@ export type AgentConfig = {
 export type AgentState = {
   status: 'active' | 'paused';
   config: AgentConfig;
+  dilithiumSk?: string; // hex-encoded ML-DSA-65 secret key for signing each action
   lastAction?: string;
   lastWeights?: Record<string, number>;
   lastSharpe?: number;
@@ -61,6 +63,7 @@ const schedulerCallbacks = {
     const n = state.config.assets.length;
     return {
       config: state.config,
+      dilithiumSk: state.dilithiumSk,
       currentWeights: state.lastWeights ?? Object.fromEntries(state.config.assets.map(a => [a, 1 / n])),
     };
   },
@@ -73,11 +76,12 @@ const schedulerCallbacks = {
     state.pendingActions.push({
       id: randomUUID(),
       actionHash: result.actionHash,
+      dilithiumSig: result.dilithiumSig,
       txHash: `0x${'0'.repeat(64)}`,
       success: result.pnlBps >= 0,
       pnlBps: result.pnlBps,
       timestamp: new Date().toISOString(),
-      recorded: false,
+      recorded: true, // agent confirms its own actions; on-chain recordAction is optional
     });
     persist();
   },
@@ -127,6 +131,7 @@ router.post('/resume/:agentId', (req, res) => {
 
 const RegisterSchema = z.object({
   agentId: z.number(),
+  dilithiumSk: z.string().optional(), // hex-encoded ML-DSA-65 secret key
   config: z.object({
     riskLevel: z.enum(['conservative', 'balanced', 'aggressive']),
     assets: z.array(z.string()).min(2).max(10),
@@ -141,11 +146,12 @@ const RegisterSchema = z.object({
 router.post('/register', (req, res) => {
   const parsed = RegisterSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { agentId, config } = parsed.data;
+  const { agentId, config, dilithiumSk } = parsed.data;
   const n = config.assets.length;
   agents.set(agentId, {
     status: 'active',
     config,
+    dilithiumSk,
     lastAction: new Date().toISOString(),
     lastWeights: Object.fromEntries(config.assets.map(a => [a, 1 / n])),
     pendingActions: [],

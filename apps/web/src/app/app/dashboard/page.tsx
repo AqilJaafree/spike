@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAccount, useChainId, useSwitchChain, useWriteContract } from 'wagmi';
+import { useAccount, useChainId, useWriteContract } from 'wagmi';
 import { readContract, waitForTransactionReceipt } from '@wagmi/core';
 import { Btn, Card, Row, SectionLabel, StatusPill, Toast } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
@@ -11,6 +11,7 @@ import { wagmiConfig } from '@/lib/wagmi/config';
 import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI, AGENT_NFT_ADDRESS, AGENT_NFT_ABI } from '@/lib/contracts';
 import { zgTestnet } from '@/lib/wagmi/config';
 import { pauseAgent, resumeAgent, getPendingActions, ackAction, getAgentStatus, type AgentStatus } from '@/lib/agent/client';
+import { fetchPrices, formatPrice } from '@/lib/prices/client';
 
 interface Agent {
   id: number;
@@ -67,27 +68,27 @@ export default function DashboardPage() {
   const router = useRouter();
   const { address } = useAccount();
   const chainId = useChainId();
-  const { switchChain } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
   const isWrongNetwork = !!address && chainId !== zgTestnet.id;
 
   const [botStatus, setBotStatus] = useState<'running' | 'paused'>('running');
   const [period, setPeriod] = useState('30d');
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showWithdrawConfirm, setShowWithdrawConfirm] = useState(false);
   const [activeAgent, setActiveAgent] = useState(0);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'success' as 'success' | 'error' });
   const [nftMeta, setNftMeta] = useState<{ dilithiumFingerprint: `0x${string}`; configRoot: `0x${string}`; actionSigFingerprint: `0x${string}`; skillKey: `0x${string}`; mintedAt: bigint } | null>(null);
   const [perfScore, setPerfScore] = useState<{ totalActions: bigint; successCount: bigint; pnlBasisPoints: bigint; lastUpdatedAt: bigint } | null>(null);
+  const [agentOnChain, setAgentOnChain] = useState<{ owner: `0x${string}`; status: number; deployedAt: bigint; lastActionAt: bigint; rebalanceCount: bigint } | null>(null);
+  const [nftName, setNftName] = useState<string | null>(null);
   const [nftLoading, setNftLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
-  useEffect(() => {
-    setWalletAddress(sessionStorage.getItem('spike_wallet'));
-  }, []);
+  const isWrongOwner = !!(agentOnChain && address && agentOnChain.owner.toLowerCase() !== address.toLowerCase());
 
   useEffect(() => {
     // Optimistic fallback: show stored agent immediately while on-chain load happens
@@ -128,31 +129,38 @@ export default function DashboardPage() {
     if (!agent) return;
     const agentId = BigInt(agent.id);
     setNftLoading(true);
-    Promise.all([
-      readContract(wagmiConfig, {
-        address: AGENT_NFT_ADDRESS,
-        abi: AGENT_NFT_ABI,
-        functionName: 'getAgentMeta',
-        args: [agentId],
-        chainId: zgTestnet.id,
-      }),
-      readContract(wagmiConfig, {
-        address: AGENT_REGISTRY_ADDRESS,
-        abi: AGENT_REGISTRY_ABI,
-        functionName: 'getPerformanceScore',
-        args: [agentId],
-        chainId: zgTestnet.id,
-      }),
+    Promise.allSettled([
+      readContract(wagmiConfig, { address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'getAgentMeta', args: [agentId], chainId: zgTestnet.id }),
+      readContract(wagmiConfig, { address: AGENT_REGISTRY_ADDRESS, abi: AGENT_REGISTRY_ABI, functionName: 'getPerformanceScore', args: [agentId], chainId: zgTestnet.id }),
+      readContract(wagmiConfig, { address: AGENT_REGISTRY_ADDRESS, abi: AGENT_REGISTRY_ABI, functionName: 'getAgent', args: [agentId], chainId: zgTestnet.id }),
+      readContract(wagmiConfig, { address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'tokenURI', args: [agentId], chainId: zgTestnet.id }),
     ])
-      .then(([meta, perf]) => {
-        setNftMeta(meta as { dilithiumFingerprint: `0x${string}`; configRoot: `0x${string}`; actionSigFingerprint: `0x${string}`; skillKey: `0x${string}`; mintedAt: bigint });
-        setPerfScore(perf as { totalActions: bigint; successCount: bigint; pnlBasisPoints: bigint; lastUpdatedAt: bigint });
+      .then(([meta, perf, agent, uri]) => {
+        if (meta.status === 'fulfilled') setNftMeta(meta.value as { dilithiumFingerprint: `0x${string}`; configRoot: `0x${string}`; actionSigFingerprint: `0x${string}`; skillKey: `0x${string}`; mintedAt: bigint });
+        if (perf.status === 'fulfilled') setPerfScore(perf.value as { totalActions: bigint; successCount: bigint; pnlBasisPoints: bigint; lastUpdatedAt: bigint });
+        if (agent.status === 'fulfilled') {
+          const a = agent.value as { owner: `0x${string}`; status: number; deployedAt: bigint; lastActionAt: bigint; rebalanceCount: bigint };
+          setAgentOnChain(a);
+          if (a.status === 0) setBotStatus('running');
+          else if (a.status === 1) setBotStatus('paused');
+        }
+        if (uri.status === 'fulfilled') {
+          try {
+            const raw = uri.value as string;
+            const prefix = 'data:application/json;charset=utf-8,';
+            const json = JSON.parse(raw.startsWith(prefix) ? raw.slice(prefix.length) : raw) as { name: string };
+            setNftName(json.name);
+          } catch { /* non-critical */ }
+        }
       })
-      .catch(() => null)
       .finally(() => setNftLoading(false));
   }, [address, activeAgent, agents]);
 
-  // Poll agent service status for real bot data (weights, sharpe, last action, activities).
+  useEffect(() => {
+    const assets = agentStatus?.config.assets ?? ['ETH', 'BTC', 'SOL', 'USDC'];
+    fetchPrices(assets).then(setLivePrices).catch(() => null);
+  }, [agentStatus?.config.assets?.join(',')]);
+
   useEffect(() => {
     if (agents.length === 0) return;
     const agentId = agents[activeAgent]?.id;
@@ -167,7 +175,6 @@ export default function DashboardPage() {
     return () => { cancelled = true; clearInterval(t); };
   }, [agents, activeAgent]);
 
-  // Poll agent service for unrecorded actions and submit them on-chain.
   useEffect(() => {
     if (!address || !AGENT_REGISTRY_ADDRESS || agents.length === 0) return;
     const agent = agents[activeAgent];
@@ -175,6 +182,7 @@ export default function DashboardPage() {
     const agentId = agent.id;
 
     async function submitPending() {
+      if (chainId !== zgTestnet.id) return;
       const pending = await getPendingActions(agentId).catch(() => []);
       for (const action of pending) {
         try {
@@ -182,6 +190,7 @@ export default function DashboardPage() {
             address: AGENT_REGISTRY_ADDRESS!,
             abi: AGENT_REGISTRY_ABI,
             functionName: 'recordAction',
+            chainId: zgTestnet.id,
             args: [
               BigInt(agentId),
               action.actionHash as `0x${string}`,
@@ -191,12 +200,14 @@ export default function DashboardPage() {
           });
           await waitForTransactionReceipt(wagmiConfig, { hash });
           await ackAction(agentId, action.id).catch(() => null);
-        } catch {
-          // Non-critical — will retry on next poll
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Surface the first failure — user needs to know (wrong wallet, rejected, wrong chain)
+          showToast(`Record action failed: ${msg.slice(0, 100)}`, 'error');
+          break;
         }
       }
       if (pending.length > 0) {
-        // Refresh performance score after recording actions
         readContract(wagmiConfig, {
           address: AGENT_REGISTRY_ADDRESS!,
           abi: AGENT_REGISTRY_ABI,
@@ -212,7 +223,7 @@ export default function DashboardPage() {
     submitPending();
     const timer = setInterval(submitPending, 30_000);
     return () => clearInterval(timer);
-  }, [address, activeAgent, agents, writeContractAsync]);
+  }, [address, chainId, activeAgent, agents, writeContractAsync]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ visible: true, message, type });
@@ -260,6 +271,7 @@ export default function DashboardPage() {
           address: AGENT_REGISTRY_ADDRESS,
           abi: AGENT_REGISTRY_ABI,
           functionName: 'resumeAgent',
+          chainId: zgTestnet.id,
           args: [BigInt(agentId)],
         });
         await waitForTransactionReceipt(wagmiConfig, { hash });
@@ -284,6 +296,7 @@ export default function DashboardPage() {
           address: AGENT_REGISTRY_ADDRESS,
           abi: AGENT_REGISTRY_ABI,
           functionName: 'pauseAgent',
+          chainId: zgTestnet.id,
           args: [BigInt(agentId)],
         });
         await waitForTransactionReceipt(wagmiConfig, { hash });
@@ -297,60 +310,46 @@ export default function DashboardPage() {
     }
   };
 
+  const handleWithdraw = async () => {
+    const agentId = getAgentId();
+    setShowWithdrawConfirm(false);
+    setActionLoading(true);
+    try {
+      if (address && AGENT_REGISTRY_ADDRESS) {
+        const hash = await writeContractAsync({
+          address: AGENT_REGISTRY_ADDRESS,
+          abi: AGENT_REGISTRY_ABI,
+          functionName: 'withdrawAgent',
+          chainId: zgTestnet.id,
+          args: [BigInt(agentId)],
+        });
+        await waitForTransactionReceipt(wagmiConfig, { hash });
+      }
+      setBotStatus('paused');
+      setAgents(prev => prev.filter((_, i) => i !== activeAgent));
+      setActiveAgent(0);
+      sessionStorage.removeItem('spike_deployed');
+      sessionStorage.removeItem('spike_agent_id');
+      showToast('Agent withdrawn');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to withdraw', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const addAgent = () => {
-    const newId = agents.length;
-    setAgents(prev => [...prev, { id: newId, name: `Agent ${newId + 1}`, risk: 'balanced', status: 'setting up', value: '$0' }]);
-    setActiveAgent(newId);
+    const newId = Math.max(0, ...agents.map(a => a.id)) + 1;
+    setAgents(prev => [...prev, { id: newId, name: `Agent ${prev.length + 1}`, risk: 'balanced', status: 'setting up', value: '$0' }]);
+    setActiveAgent(agents.length);
+    // Clear deploy markers so review/page treats this as a new deployAgent, not updateConfig
+    sessionStorage.removeItem('spike_deployed');
+    sessionStorage.removeItem('spike_agent_id');
     router.push('/app/configure');
   };
 
-  const truncatedWallet = walletAddress
-    ? (walletAddress.length > 12 ? walletAddress : walletAddress)
-    : null;
-
   return (
     <div style={{ background: '#FBF7F0', minHeight: '100vh' }}>
-      {/* NavBar */}
-      <nav style={{ position: 'sticky', top: 0, zIndex: 100, height: 64, background: '#FBF7F0', borderBottom: '1px solid #CDC9C3', display: 'flex', alignItems: 'center', padding: '0 24px', gap: 12 }}>
-        <button onClick={() => router.push('/')} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 10, background: '#555555', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FBF7F0' }}><Icons.Sun /></div>
-          <div>
-            <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 900, fontSize: 20, letterSpacing: '-0.02em', color: '#555555', lineHeight: 1 }}>Spike</div>
-            <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#8AADA4', marginTop: 1 }}>Quantum DeFi Agent</div>
-          </div>
-        </button>
-        <div style={{ flex: 1 }} />
-        {truncatedWallet && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#D9E4DD', border: '1px solid #B8CFC8', borderRadius: 99, padding: '4px 10px', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#5e8880' }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#5e8880' }} />PQC Active
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#D9E4DD', border: '1px solid #B8CFC8', borderRadius: 99, padding: '6px 12px', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, color: '#555555' }}>
-              <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace" }}>{truncatedWallet}</span>
-            </div>
-          </div>
-        )}
-        <button onClick={() => router.push('/app/settings')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#A8A49E', padding: 6, borderRadius: 8, display: 'flex', alignItems: 'center', transition: 'color 0.15s' }}
-          onMouseEnter={e => (e.currentTarget.style.color = '#555555')}
-          onMouseLeave={e => (e.currentTarget.style.color = '#A8A49E')}>
-          <Icons.Settings />
-        </button>
-      </nav>
-
-      {/* Wrong network banner */}
-      {isWrongNetwork && (
-        <div style={{ background: '#fff3cd', borderBottom: '1px solid #ffe69c', padding: '10px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, color: '#856404' }}>
-            Wrong network — connect to 0G Testnet to see your agents
-          </span>
-          <button
-            onClick={() => switchChain({ chainId: zgTestnet.id })}
-            style={{ background: '#856404', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 16px', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
-            Switch to 0G Testnet
-          </button>
-        </div>
-      )}
-
       {/* Agent tabs */}
       <div style={{ background: '#FBF7F0', borderBottom: '1px solid #CDC9C3', padding: '0 24px', display: 'flex', alignItems: 'center', overflowX: 'auto' }}>
         {agentsLoading ? (
@@ -374,6 +373,16 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {/* Wrong owner warning */}
+      {isWrongOwner && (
+        <div style={{ background: '#fff3cd', borderBottom: '1px solid #ffe69c', padding: '10px 24px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 14 }}>⚠️</span>
+          <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#856404', fontWeight: 600 }}>
+            Connected wallet <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace" }}>{address?.slice(0, 6)}…{address?.slice(-4)}</span> is not the owner of this agent. Write operations will fail.
+          </span>
+        </div>
+      )}
+
       {/* Dashboard header */}
       <div style={{ background: '#FBF7F0', borderBottom: '1px solid #CDC9C3', padding: '20px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
@@ -387,10 +396,14 @@ export default function DashboardPage() {
                 </span>
               </div>
             </div>
-            <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#A8A49E' }}>Managing since 4 days ago · Last trade 8 minutes ago</div>
+            <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#A8A49E' }}>
+              {nftMeta ? `Managing since ${relativeTime(new Date(Number(nftMeta.mintedAt) * 1000).toISOString())}` : 'Managing your portfolio'}
+              {agentStatus?.lastAction ? ` · Last rebalance ${relativeTime(agentStatus.lastAction)}` : ''}
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Btn variant="ghost" size="sm" onClick={() => router.push('/app/configure')}>Change strategy</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => setShowWithdrawConfirm(true)}>Withdraw</Btn>
             <Btn variant={botStatus === 'running' ? 'sage' : 'primary'} size="sm"
               icon={actionLoading ? undefined : botStatus === 'running' ? <Icons.Pause /> : <Icons.Play />}
               onClick={handlePauseResume}
@@ -443,6 +456,9 @@ export default function DashboardPage() {
                       <div style={{ width: 8, height: 8, borderRadius: '50%', background: a.color, flexShrink: 0 }} />
                       <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 12, color: '#555555', minWidth: 36 }}>{a.sym}</span>
                       <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#A8A49E' }}>{a.pct}%</span>
+                      {livePrices[a.sym] && (
+                        <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: '#8AADA4', marginLeft: 'auto' }}>{formatPrice(livePrices[a.sym])}</span>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -452,10 +468,16 @@ export default function DashboardPage() {
 
           {AGENT_NFT_ADDRESS && AGENT_REGISTRY_ADDRESS && (
             <Card>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                 <SectionLabel>Agent NFT</SectionLabel>
                 <span style={{ background: '#555555', color: '#FBF7F0', borderRadius: 6, padding: '2px 7px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontWeight: 700, fontSize: 10, letterSpacing: '0.06em' }}>INFT</span>
+                {agentOnChain && (
+                  <span style={{ background: agentOnChain.status === 0 ? '#d4edda' : agentOnChain.status === 1 ? '#fff3cd' : '#f8d7da', color: agentOnChain.status === 0 ? '#2d6a4f' : agentOnChain.status === 1 ? '#856404' : '#842029', borderRadius: 6, padding: '2px 7px', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 10 }}>
+                    {['Active', 'Paused', 'Withdrawn'][agentOnChain.status] ?? 'Unknown'}
+                  </span>
+                )}
               </div>
+              {nftName && <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: '#A8A49E', marginBottom: 12 }}>{nftName}</div>}
               {nftLoading ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {[80, 60, 60, 50, 70].map((w, i) => (
@@ -474,11 +496,18 @@ export default function DashboardPage() {
                       {nftMeta.skillKey.slice(0, 10)}…
                     </span>
                   </Row>
-                  <Row label="Minted">
+                  <Row label="Deployed">
                     <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#555555' }}>
-                      {new Date(Number(nftMeta.mintedAt) * 1000).toLocaleDateString()}
+                      {agentOnChain ? new Date(Number(agentOnChain.deployedAt) * 1000).toLocaleDateString() : new Date(Number(nftMeta.mintedAt) * 1000).toLocaleDateString()}
                     </span>
                   </Row>
+                  {agentOnChain && (
+                    <Row label="On-chain rebalances">
+                      <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, color: '#555555' }}>
+                        {agentOnChain.rebalanceCount.toString()}
+                      </span>
+                    </Row>
+                  )}
                   {perfScore && (
                     <>
                       <Row label="Total actions">
@@ -521,7 +550,7 @@ export default function DashboardPage() {
               {[
                 { label: 'Risk score', value: sharpe.toFixed(2) },
                 { label: 'Yearly return', value: `${currentAPY}%` },
-                { label: 'Trades made', value: '47' },
+                { label: 'Trades made', value: perfScore ? perfScore.totalActions.toString() : '0' },
               ].map(m => (
                 <div key={m.label} style={{ background: '#D9E4DD', borderRadius: 12, padding: '8px 14px' }}>
                   <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 900, fontSize: 18, color: '#555555' }}>{m.value}</div>
@@ -607,6 +636,20 @@ export default function DashboardPage() {
             <div style={{ display: 'flex', gap: 10 }}>
               <Btn variant="ghost" style={{ flex: 1 }} onClick={() => setShowConfirm(false)}>Cancel</Btn>
               <Btn style={{ flex: 1 }} onClick={handleConfirmPause}>Pause Bot</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Withdraw confirm modal */}
+      {showWithdrawConfirm && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(85,85,85,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: '#FBF7F0', borderRadius: 24, border: '1.5px solid #CDC9C3', padding: 32, maxWidth: 380, width: '100%', animation: 'modalIn 0.2s ease' }}>
+            <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 20, color: '#555555', marginBottom: 10 }}>Withdraw agent?</div>
+            <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 24, lineHeight: 1.7 }}>This will permanently deactivate your agent on-chain. Your funds stay in your wallet and you can deploy a new agent any time.</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Btn variant="ghost" style={{ flex: 1 }} onClick={() => setShowWithdrawConfirm(false)}>Cancel</Btn>
+              <Btn style={{ flex: 1, background: '#842029', color: '#fff' }} onClick={handleWithdraw}>Withdraw</Btn>
             </div>
           </div>
         </div>

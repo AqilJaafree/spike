@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAccount, useSignMessage, useWriteContract } from 'wagmi';
+import { useAccount, useWriteContract } from 'wagmi';
 import { readContract, waitForTransactionReceipt } from '@wagmi/core';
 import { Btn, Card, SectionLabel, Row } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
-import { keccak256, concat } from 'viem';
+import { keccak256, concat, toBytes } from 'viem';
 import {
   PQC_REGISTRY_ADDRESS, AGENT_REGISTRY_ADDRESS,
   PQC_REGISTRY_ABI, AGENT_REGISTRY_ABI,
@@ -19,10 +19,18 @@ import type { OptimizeResult } from '@/lib/quantum/client';
 
 const DEPLOY_STEPS = [
   'Encrypting your settings',
-  'Signing with your wallet',
+  'Signing with quantum key',
   'Sending to the network',
   'Confirming on blockchain',
   'Running final security check',
+];
+
+const UPDATE_STEPS = [
+  'Preparing new configuration',
+  'Signing with your wallet',
+  'Updating on blockchain',
+  'Confirming changes',
+  'Restarting agent with new config',
 ];
 
 const RISK_LABEL: Record<string, string> = { conservative: 'Conservative', balanced: 'Balanced', aggressive: 'Aggressive' };
@@ -40,7 +48,6 @@ const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 export default function ReviewPage() {
   const router = useRouter();
   const { address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
   const { writeContractAsync } = useWriteContract();
 
   const [config, setConfig] = useState<Partial<AgentConfig> | null>(null);
@@ -50,6 +57,7 @@ export default function ReviewPage() {
   const [deployStep, setDeployStep] = useState(-1);
   const [deployed, setDeployed] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
+  const [isUpdate, setIsUpdate] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem('spike_agent_config');
@@ -61,87 +69,112 @@ export default function ReviewPage() {
 
     const skillId = sessionStorage.getItem('spike_skill_id');
     if (skillId) setSkillName(SKILL_NAMES[skillId] ?? skillId);
+
+    setIsUpdate(!!(sessionStorage.getItem('spike_deployed') && sessionStorage.getItem('spike_agent_id')));
   }, []);
 
   async function handleDeploy() {
     if (!config) return;
+    if (!address) {
+      setDeployError('Wallet not connected. Please connect your wallet and try again.');
+      return;
+    }
+    if (!AGENT_REGISTRY_ADDRESS) {
+      setDeployError('Contract address not configured. Check NEXT_PUBLIC_AGENT_REGISTRY in .env.local.');
+      return;
+    }
     setDeploying(true);
     setDeployError(null);
     setDeployStep(-1);
 
     try {
-      // Step 1 — hash config + read stored fingerprints
+      // Step 1 — hash config
       setDeployStep(0);
       const skillKeyB32 = (sessionStorage.getItem('spike_skill_key') as `0x${string}`) ?? ZERO_B32;
-      const dilithiumFp = sessionStorage.getItem('spike_dilithium_fp') ?? '';
-      const kyberFp = sessionStorage.getItem('spike_kyber_fp') ?? '';
       const configRoot = configToBytes32(config);
-      const dilithiumFpB32 = fingerprintToBytes32(dilithiumFp || 'demo-dilithium');
-      const kyberFpB32 = fingerprintToBytes32(kyberFp || 'demo-kyber');
       await delay(500);
 
-      // Step 2 — sign with wallet; compute a keccak256 commitment of (configRoot ‖ walletSig)
-      // The full ECDSA signature lives off-chain; only the 32-byte commitment is stored on-chain.
+      // Step 2 — sign configRoot with Dilithium SK; store keccak256 commitment on-chain
       setDeployStep(1);
       let actionSigFingerprintB32: `0x${string}` = ZERO_B32;
-      if (address) {
-        const sig = await signMessageAsync({ message: `Spike Agent: ${configRoot}` });
-        actionSigFingerprintB32 = keccak256(concat([configRoot, sig as `0x${string}`]));
+      const skHex = sessionStorage.getItem('spike_dilithium_sk');
+      if (skHex) {
+        const { dilithiumSign } = await import('@spike/pqc');
+        const sk = Uint8Array.from((skHex.match(/.{2}/g) ?? []).map(b => parseInt(b, 16)));
+        const { signature } = dilithiumSign(sk, toBytes(configRoot));
+        const sigHex = Array.from(signature).map(b => b.toString(16).padStart(2, '0')).join('');
+        sessionStorage.setItem('spike_dilithium_config_sig', sigHex);
+        actionSigFingerprintB32 = keccak256(`0x${sigHex}` as `0x${string}`);
       } else {
         await delay(600);
       }
 
-      // Steps 3 & 4 — on-chain registration
+      // Steps 3 & 4 — on-chain registration or update
       setDeployStep(2);
-      let agentId = 1;
+      const existingAgentIdStr = sessionStorage.getItem('spike_agent_id');
+      const isUpdateMode = !!(sessionStorage.getItem('spike_deployed') && existingAgentIdStr);
+      let agentId = isUpdateMode && existingAgentIdStr ? parseInt(existingAgentIdStr) : 1;
 
-      if (address && PQC_REGISTRY_ADDRESS && AGENT_REGISTRY_ADDRESS) {
-        // Check if PQC keys already registered
-        const isReg = await readContract(wagmiConfig, {
-          address: PQC_REGISTRY_ADDRESS,
-          abi: PQC_REGISTRY_ABI,
-          functionName: 'isRegistered',
-          args: [address],
+      if (isUpdateMode) {
+        const updateHash = await writeContractAsync({
+          address: AGENT_REGISTRY_ADDRESS,
+          abi: AGENT_REGISTRY_ABI,
+          functionName: 'updateConfig',
           chainId: 16602,
+          args: [BigInt(agentId), configRoot, actionSigFingerprintB32],
         });
-
-        if (!isReg) {
-          const storageRoot = keccak256(concat([dilithiumFpB32, kyberFpB32]));
-          const pqcHash = await writeContractAsync({
+        setDeployStep(3);
+        await waitForTransactionReceipt(wagmiConfig, { hash: updateHash });
+      } else {
+        if (PQC_REGISTRY_ADDRESS) {
+          const isReg = await readContract(wagmiConfig, {
             address: PQC_REGISTRY_ADDRESS,
             abi: PQC_REGISTRY_ABI,
-            functionName: 'register',
-            args: [dilithiumFpB32, kyberFpB32, storageRoot],
+            functionName: 'isRegistered',
+            args: [address],
+            chainId: 16602,
           });
-          setDeployStep(3);
-          await waitForTransactionReceipt(wagmiConfig, { hash: pqcHash });
+
+          if (!isReg) {
+            const dilithiumFpB32 = fingerprintToBytes32(sessionStorage.getItem('spike_dilithium_fp') || 'demo-dilithium');
+            const kyberFpB32     = fingerprintToBytes32(sessionStorage.getItem('spike_kyber_fp') || 'demo-kyber');
+            const storageRoot    = keccak256(concat([dilithiumFpB32, kyberFpB32]));
+            const pqcHash = await writeContractAsync({
+              address: PQC_REGISTRY_ADDRESS,
+              abi: PQC_REGISTRY_ABI,
+              functionName: 'register',
+              args: [dilithiumFpB32, kyberFpB32, storageRoot],
+            });
+            setDeployStep(3);
+            await waitForTransactionReceipt(wagmiConfig, { hash: pqcHash });
+          } else {
+            setDeployStep(3);
+            await delay(300);
+          }
         } else {
           setDeployStep(3);
           await delay(300);
         }
 
-        // Deploy agent on-chain
         const agentHash = await writeContractAsync({
           address: AGENT_REGISTRY_ADDRESS,
           abi: AGENT_REGISTRY_ABI,
           functionName: 'deployAgent',
+          chainId: 16602,
           args: [configRoot, actionSigFingerprintB32, ZERO_B32, skillKeyB32],
         });
         const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: agentHash });
         const parsed = parseAgentIdFromReceipt(receipt);
         if (parsed !== null) agentId = Number(parsed);
-      } else {
-        // No contract addresses configured — simulate steps
-        setDeployStep(3);
-        await delay(1400);
       }
 
       sessionStorage.setItem('spike_agent_id', String(agentId));
 
-      // Step 5 — register with local agent service
+      // Step 5 — register with local agent service; pass Dilithium SK so it can sign actions
       setDeployStep(4);
       try {
-        await registerAgent(agentId, config);
+        const dilithiumSk = sessionStorage.getItem('spike_dilithium_sk') ?? undefined;
+        await registerAgent(agentId, config, dilithiumSk);
       } catch {
         // Non-critical if agent service is offline
       }
@@ -170,8 +203,12 @@ export default function ReviewPage() {
     <div style={{ background: '#FBF7F0', minHeight: '100vh', paddingBottom: 80 }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '36px 24px' }}>
         <div style={{ marginBottom: 28 }}>
-          <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 28, color: '#555555', letterSpacing: '-0.01em', marginBottom: 6 }}>Almost there — review your setup</div>
-          <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', lineHeight: 1.7 }}>Check everything looks right before your bot starts working.</div>
+          <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 28, color: '#555555', letterSpacing: '-0.01em', marginBottom: 6 }}>
+            {isUpdate ? 'Review your new strategy' : 'Almost there — review your setup'}
+          </div>
+          <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', lineHeight: 1.7 }}>
+            {isUpdate ? 'Your agent will be updated on-chain with these new settings.' : 'Check everything looks right before your bot starts working.'}
+          </div>
         </div>
 
         {/* Quantum allocation preview */}
@@ -263,7 +300,7 @@ export default function ReviewPage() {
         </Card>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <Btn size="xl" style={{ width: '100%' }} onClick={handleDeploy}>Start my bot →</Btn>
+          <Btn size="xl" style={{ width: '100%' }} onClick={handleDeploy}>{isUpdate ? 'Update strategy →' : 'Start my bot →'}</Btn>
           <Btn variant="ghost" size="lg" style={{ width: '100%' }} onClick={() => router.push('/app/configure')}>← Change settings</Btn>
         </div>
       </div>
@@ -274,9 +311,13 @@ export default function ReviewPage() {
           <div style={{ background: '#FBF7F0', borderRadius: 24, border: '1.5px solid #CDC9C3', padding: 36, maxWidth: 400, width: '100%', textAlign: 'center', animation: 'modalIn 0.25s ease' }}>
             {deployed ? (
               <>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
-                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 900, fontSize: 26, color: '#555555', marginBottom: 10 }}>Your bot is live!</div>
-                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 28, lineHeight: 1.7 }}>Spike is now watching the market and managing your portfolio automatically.</div>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>{isUpdate ? '✅' : '🎉'}</div>
+                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 900, fontSize: 26, color: '#555555', marginBottom: 10 }}>
+                  {isUpdate ? 'Strategy updated!' : 'Your bot is live!'}
+                </div>
+                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 28, lineHeight: 1.7 }}>
+                  {isUpdate ? 'Your agent is now running with the new configuration.' : 'Spike is now watching the market and managing your portfolio automatically.'}
+                </div>
                 <Btn size="lg" style={{ width: '100%' }} onClick={handleGoToDashboard}>Go to my portfolio →</Btn>
               </>
             ) : deployError ? (
@@ -293,7 +334,7 @@ export default function ReviewPage() {
               <>
                 <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 22, color: '#555555', marginBottom: 24 }}>Starting your bot…</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24, textAlign: 'left' }}>
-                  {DEPLOY_STEPS.map((s, i) => (
+                  {(isUpdate ? UPDATE_STEPS : DEPLOY_STEPS).map((s, i) => (
                     <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       <div style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0, background: i <= deployStep ? '#555555' : '#D9E4DD', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.3s' }}>
                         {i < deployStep ? (
@@ -308,7 +349,7 @@ export default function ReviewPage() {
                 </div>
                 {deployStep === 1 && (
                   <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#A8A49E', padding: '8px 14px', background: '#D9E4DD', borderRadius: 10 }}>
-                    Check your wallet for a signature request
+                    Signing with your ML-DSA-65 key…
                   </div>
                 )}
                 {(deployStep === 2 || deployStep === 3) && (

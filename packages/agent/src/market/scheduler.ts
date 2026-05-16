@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { signAction } from '@spike/pqc';
 
 const QUANTUM_URL = process.env.QUANTUM_SERVICE_URL ?? 'http://localhost:8000';
 
@@ -23,6 +24,7 @@ export type CycleResult = {
   sharpe: number;
   rebalanced: boolean;
   actionHash: string;
+  dilithiumSig?: string; // hex-encoded ML-DSA-65 signature of the action envelope
   pnlBps: number;
   trades: Array<{ from: string; to: string; amount: number }>;
 };
@@ -54,6 +56,11 @@ async function callOptimize(
   covariance: number[][],
   riskLevel: string,
 ): Promise<{ weights: Record<string, number>; sharpe: number; backend_used: string }> {
+  const n = assets.length;
+  const minWeight = 0.05;
+  // Ensure max_weight is high enough that a feasible solution exists: sum of n weights = 1
+  // requires max_weight >= 1 - (n-1)*min_weight
+  const maxWeight = Math.max(0.40, 1 - (n - 1) * minWeight);
   const res = await fetch(`${QUANTUM_URL}/optimize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -62,8 +69,8 @@ async function callOptimize(
       returns,
       covariance,
       risk_tolerance: riskLevel === 'aggressive' ? 0.8 : riskLevel === 'balanced' ? 0.5 : 0.2,
-      max_weight: 0.40,
-      min_weight: 0.05,
+      max_weight: maxWeight,
+      min_weight: minWeight,
     }),
   });
   if (!res.ok) throw new Error(`Quantum optimize ${res.status}`);
@@ -94,6 +101,7 @@ export async function runCycle(
   agentId: number,
   config: AgentLoopConfig,
   currentWeights: Record<string, number>,
+  dilithiumSk?: string,
 ): Promise<CycleResult> {
   const prices = await fetchPrices(config.assets);
   const { returns, covariance } = syntheticReturns(config.assets);
@@ -119,18 +127,39 @@ export async function runCycle(
     : 0;
   const actionHash = `0x${createHash('sha256')
     .update(`${agentId}:${Date.now()}:${maxDrift.toFixed(6)}`)
-    .digest('hex')}`;
+    .digest('hex')}` as `0x${string}`;
+
+  // Sign the action with the Dilithium SK provided by the frontend at registration
+  let dilithiumSig: string | undefined;
+  if (dilithiumSk) {
+    try {
+      const sk = Uint8Array.from(
+        (dilithiumSk.match(/.{2}/g) ?? []).map(b => parseInt(b, 16))
+      );
+      const { signature } = signAction(sk, {
+        chainId: 16602n,
+        contractAddress: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+        nonce: BigInt(Date.now()),
+        actionHash,
+        actionType: 'rebalance',
+      });
+      dilithiumSig = Array.from(signature).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (err) {
+      console.warn(`[agent:${agentId}] Dilithium signing failed:`, err instanceof Error ? err.message : err);
+    }
+  }
 
   console.log(
     `[agent:${agentId}] drift=${maxDrift.toFixed(4)} threshold=${threshold.toFixed(2)} ` +
-    `rebalanced=${rebalanced} sharpe=${qpu.sharpe.toFixed(3)} backend=${qpu.backend_used}`
+    `rebalanced=${rebalanced} sharpe=${qpu.sharpe.toFixed(3)} backend=${qpu.backend_used}` +
+    (dilithiumSig ? ` dilithium=signed(${dilithiumSig.length / 2}B)` : ' dilithium=unsigned')
   );
 
-  return { weights: qpu.weights, sharpe: qpu.sharpe, rebalanced, actionHash, pnlBps, trades };
+  return { weights: qpu.weights, sharpe: qpu.sharpe, rebalanced, actionHash, dilithiumSig, pnlBps, trades };
 }
 
 export type SchedulerCallbacks = {
-  getState: (agentId: number) => { config: AgentLoopConfig; currentWeights: Record<string, number> } | undefined;
+  getState: (agentId: number) => { config: AgentLoopConfig; currentWeights: Record<string, number>; dilithiumSk?: string } | undefined;
   onRebalance: (agentId: number, result: CycleResult) => void;
 };
 
@@ -144,7 +173,7 @@ export function startAgentLoop(agentId: number, cb: SchedulerCallbacks): void {
     const state = cb.getState(agentId);
     if (!state) return;
     try {
-      const result = await runCycle(agentId, state.config, state.currentWeights);
+      const result = await runCycle(agentId, state.config, state.currentWeights, state.dilithiumSk);
       if (result.rebalanced) cb.onRebalance(agentId, result);
     } catch (err) {
       console.error(`[agent:${agentId}]`, err instanceof Error ? err.message : err);

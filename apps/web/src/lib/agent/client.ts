@@ -19,11 +19,11 @@ export async function resumeAgent(agentId: number) {
   return res.json();
 }
 
-export async function registerAgent(agentId: number, config: Partial<AgentConfig>) {
+export async function registerAgent(agentId: number, config: Partial<AgentConfig>, dilithiumSk?: string) {
   const res = await fetch(`${AGENT_URL}/api/agent/register`, {
     method: 'POST',
     headers: agentHeaders(),
-    body: JSON.stringify({ agentId, config }),
+    body: JSON.stringify({ agentId, config, dilithiumSk }),
   });
   if (!res.ok) throw new Error('Failed to register agent');
   return res.json();
