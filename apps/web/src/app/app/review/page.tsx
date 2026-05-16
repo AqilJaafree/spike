@@ -219,6 +219,22 @@ export default function ReviewPage() {
           await delay(300);
         }
 
+        // Pre-register TEE attestation so deployAgent verifier check passes.
+        // The server-side route uses the deployer wallet (= attestor) to call
+        // TeeAttestationVerifier.registerVerification before the user's tx.
+        const dilithiumFpB32 = fingerprintToBytes32(
+          sessionStorage.getItem('spike_dilithium_fp') || 'demo-dilithium'
+        );
+        await fetch('/api/attestation/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pubkeyFp: dilithiumFpB32,
+            configRoot,
+            sigFingerprint: actionSigFingerprintB32,
+          }),
+        });
+
         const agentHash = await writeContractAsync({
           address: AGENT_REGISTRY_ADDRESS,
           abi: AGENT_REGISTRY_ABI,
