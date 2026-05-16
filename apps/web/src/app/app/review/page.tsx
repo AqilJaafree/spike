@@ -219,17 +219,33 @@ export default function ReviewPage() {
           await delay(300);
         }
 
-        // Pre-register TEE attestation so deployAgent verifier check passes.
-        // The server-side route uses the deployer wallet (= attestor) to call
-        // TeeAttestationVerifier.registerVerification before the user's tx.
-        const dilithiumFpB32 = fingerprintToBytes32(
+        // Read the fingerprint that's actually stored on-chain (may differ from
+        // sessionStorage if the user registered in a previous session with different keys).
+        let onChainDilithiumFp: `0x${string}` = fingerprintToBytes32(
           sessionStorage.getItem('spike_dilithium_fp') || 'demo-dilithium'
         );
+        if (PQC_REGISTRY_ADDRESS) {
+          try {
+            const keys = await readContract(wagmiConfig, {
+              address: PQC_REGISTRY_ADDRESS,
+              abi: PQC_REGISTRY_ABI,
+              functionName: 'getKeys',
+              args: [address],
+              chainId: 16602,
+            }) as { dilithiumFingerprint: `0x${string}` };
+            if (keys.dilithiumFingerprint && keys.dilithiumFingerprint !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+              onChainDilithiumFp = keys.dilithiumFingerprint;
+            }
+          } catch { /* fallback to sessionStorage value */ }
+        }
+
+        // Pre-register TEE attestation using the on-chain fingerprint so the
+        // verifier lookup in deployAgent always matches.
         await fetch('/api/attestation/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            pubkeyFp: dilithiumFpB32,
+            pubkeyFp: onChainDilithiumFp,
             configRoot,
             sigFingerprint: actionSigFingerprintB32,
           }),
