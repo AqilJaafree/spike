@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useWriteContract } from 'wagmi';
 import { readContract, waitForTransactionReceipt } from '@wagmi/core';
-import { keccak256 } from 'viem';
+import { isAddress, keccak256 } from 'viem';
 import { Btn, Toggle, KeyFingerprintCard, Toast } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import { wagmiConfig } from '@/lib/wagmi/config';
-import { PQC_REGISTRY_ADDRESS, PQC_REGISTRY_ABI } from '@/lib/contracts';
+import { PQC_REGISTRY_ADDRESS, PQC_REGISTRY_ABI, AGENT_NFT_ADDRESS, AGENT_NFT_ABI } from '@/lib/contracts';
 
 function SettingsCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -40,6 +40,16 @@ export default function SettingsPage() {
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
   const [onChainKeys, setOnChainKeys] = useState<{ dilithiumFingerprint: `0x${string}`; kyberFingerprint: `0x${string}`; storageRoot: `0x${string}`; registeredAt: bigint; updatedAt: bigint; active: boolean } | null>(null);
 
+  // ERC-7857 agent access state
+  const [agentId, setAgentId] = useState<bigint | null>(null);
+  const [authorizedUsers, setAuthorizedUsers] = useState<readonly `0x${string}`[]>([]);
+  const [delegate, setDelegate] = useState<`0x${string}` | null>(null);
+  const [newAuthUser, setNewAuthUser] = useState('');
+  const [delegateInput, setDelegateInput] = useState('');
+  const [transferTo, setTransferTo] = useState('');
+  const [cloneTo, setCloneTo] = useState('');
+  const [accessLoading, setAccessLoading] = useState<string | null>(null);
+
   useEffect(() => {
     const fp = sessionStorage.getItem('spike_dilithium_fp');
     if (fp) setFingerprint(fp.slice(0, 48));
@@ -62,6 +72,23 @@ export default function SettingsPage() {
         }
       })
       .catch(() => null);
+  }, [address]);
+
+  useEffect(() => {
+    const storedId = sessionStorage.getItem('spike_agent_id');
+    if (!storedId || !AGENT_NFT_ADDRESS || !address) return;
+    const id = BigInt(storedId);
+    setAgentId(id);
+    Promise.allSettled([
+      readContract(wagmiConfig, { address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'authorizedUsersOf', args: [id], chainId: 16602 }),
+      readContract(wagmiConfig, { address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'getDelegateAccess', args: [address], chainId: 16602 }),
+    ]).then(([users, del]) => {
+      if (users.status === 'fulfilled') setAuthorizedUsers(users.value as readonly `0x${string}`[]);
+      if (del.status === 'fulfilled') {
+        const d = del.value as `0x${string}`;
+        if (d !== '0x0000000000000000000000000000000000000000') setDelegate(d);
+      }
+    });
   }, [address]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -130,6 +157,78 @@ export default function SettingsPage() {
     } finally {
       setKeyActionLoading(false);
     }
+  };
+
+  const handleAuthorizeUser = async () => {
+    if (!agentId || !AGENT_NFT_ADDRESS || !isAddress(newAuthUser)) {
+      showToast('Enter a valid address', 'error'); return;
+    }
+    setAccessLoading('authorize');
+    try {
+      const hash = await writeContractAsync({ address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'authorizeUsage', args: [agentId, newAuthUser as `0x${string}`] });
+      await waitForTransactionReceipt(wagmiConfig, { hash });
+      setAuthorizedUsers(prev => [...prev, newAuthUser as `0x${string}`]);
+      setNewAuthUser('');
+      showToast('User authorized');
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Failed', 'error'); }
+    finally { setAccessLoading(null); }
+  };
+
+  const handleRevokeUser = async (user: `0x${string}`) => {
+    if (!agentId || !AGENT_NFT_ADDRESS) return;
+    setAccessLoading(`revoke-${user}`);
+    try {
+      const hash = await writeContractAsync({ address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'revokeAuthorization', args: [agentId, user] });
+      await waitForTransactionReceipt(wagmiConfig, { hash });
+      setAuthorizedUsers(prev => prev.filter(u => u !== user));
+      showToast('Authorization revoked');
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Failed', 'error'); }
+    finally { setAccessLoading(null); }
+  };
+
+  const handleSetDelegate = async () => {
+    if (!AGENT_NFT_ADDRESS || !isAddress(delegateInput)) {
+      showToast('Enter a valid address', 'error'); return;
+    }
+    setAccessLoading('delegate');
+    try {
+      const hash = await writeContractAsync({ address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'delegateAccess', args: [delegateInput as `0x${string}`] });
+      await waitForTransactionReceipt(wagmiConfig, { hash });
+      setDelegate(delegateInput as `0x${string}`);
+      setDelegateInput('');
+      showToast('Delegate set');
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Failed', 'error'); }
+    finally { setAccessLoading(null); }
+  };
+
+  const handleITransfer = async () => {
+    if (!agentId || !AGENT_NFT_ADDRESS || !isAddress(transferTo)) {
+      showToast('Enter a valid recipient address', 'error'); return;
+    }
+    setAccessLoading('transfer');
+    try {
+      const hash = await writeContractAsync({ address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'iTransfer', args: [transferTo as `0x${string}`, agentId, []] });
+      await waitForTransactionReceipt(wagmiConfig, { hash });
+      sessionStorage.removeItem('spike_agent_id');
+      showToast('Agent transferred');
+      setTransferTo('');
+      setTimeout(() => router.push('/app'), 1500);
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Failed', 'error'); }
+    finally { setAccessLoading(null); }
+  };
+
+  const handleIClone = async () => {
+    if (!agentId || !AGENT_NFT_ADDRESS || !isAddress(cloneTo)) {
+      showToast('Enter a valid recipient address', 'error'); return;
+    }
+    setAccessLoading('clone');
+    try {
+      const hash = await writeContractAsync({ address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'iClone', args: [cloneTo as `0x${string}`, agentId, []] });
+      await waitForTransactionReceipt(wagmiConfig, { hash });
+      showToast('Agent cloned');
+      setCloneTo('');
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Failed', 'error'); }
+    finally { setAccessLoading(null); }
   };
 
   return (
@@ -202,6 +301,64 @@ export default function SettingsPage() {
             </SettingsRow>
           ))}
         </SettingsCard>
+
+        {agentId !== null && (
+          <SettingsCard title="Agent Access (ERC-7857)">
+            {/* Authorized users */}
+            <div>
+              <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, color: '#555555', marginBottom: 8 }}>Authorized users</div>
+              {authorizedUsers.length === 0 ? (
+                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#A8A49E', marginBottom: 8 }}>No users authorized yet</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                  {authorizedUsers.map(u => (
+                    <div key={u} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: '#555555' }}>{u.slice(0, 10)}…{u.slice(-4)}</span>
+                      <Btn variant="danger" size="sm" onClick={() => handleRevokeUser(u)} style={{ minWidth: 60, padding: '3px 8px', fontSize: 11 }}>
+                        {accessLoading === `revoke-${u}` ? '…' : 'Revoke'}
+                      </Btn>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={newAuthUser} onChange={e => setNewAuthUser(e.target.value)} placeholder="0x… address" style={{ flex: 1, background: '#FBF7F0', border: '1.5px solid #CDC9C3', borderRadius: 10, padding: '8px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555', outline: 'none' }} />
+                <Btn variant="sage" size="sm" onClick={handleAuthorizeUser} style={{ minWidth: 70 }}>{accessLoading === 'authorize' ? '…' : 'Grant'}</Btn>
+              </div>
+            </div>
+
+            {/* Delegate access */}
+            <SettingsRow label="Delegate access">
+              <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: delegate ? '#555555' : '#A8A49E' }}>
+                {delegate ? `${delegate.slice(0, 10)}…${delegate.slice(-4)}` : 'None'}
+              </span>
+            </SettingsRow>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input value={delegateInput} onChange={e => setDelegateInput(e.target.value)} placeholder="0x… assistant address" style={{ flex: 1, background: '#FBF7F0', border: '1.5px solid #CDC9C3', borderRadius: 10, padding: '8px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555', outline: 'none' }} />
+              <Btn variant="sage" size="sm" onClick={handleSetDelegate} style={{ minWidth: 70 }}>{accessLoading === 'delegate' ? '…' : 'Set'}</Btn>
+            </div>
+
+            {/* iTransfer */}
+            <div>
+              <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, color: '#555555', marginBottom: 6 }}>Transfer agent</div>
+              <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#A8A49E', marginBottom: 8 }}>Recipient must have PQC keys registered on-chain.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={transferTo} onChange={e => setTransferTo(e.target.value)} placeholder="0x… recipient" style={{ flex: 1, background: '#FBF7F0', border: '1.5px solid #CDC9C3', borderRadius: 10, padding: '8px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555', outline: 'none' }} />
+                <Btn variant="danger" size="sm" onClick={handleITransfer} style={{ minWidth: 80 }}>{accessLoading === 'transfer' ? '…' : 'Transfer'}</Btn>
+              </div>
+            </div>
+
+            {/* iClone */}
+            <div>
+              <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, color: '#555555', marginBottom: 6 }}>Clone agent</div>
+              <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#A8A49E', marginBottom: 8 }}>Creates a new INFT token sharing the same config root. Recipient must have PQC keys.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={cloneTo} onChange={e => setCloneTo(e.target.value)} placeholder="0x… recipient" style={{ flex: 1, background: '#FBF7F0', border: '1.5px solid #CDC9C3', borderRadius: 10, padding: '8px 12px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555', outline: 'none' }} />
+                <Btn variant="sage" size="sm" onClick={handleIClone} style={{ minWidth: 70 }}>{accessLoading === 'clone' ? '…' : 'Clone'}</Btn>
+              </div>
+            </div>
+          </SettingsCard>
+        )}
 
         <SettingsCard title="Data & Privacy">
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>

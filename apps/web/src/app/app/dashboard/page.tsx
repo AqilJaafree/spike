@@ -85,6 +85,8 @@ export default function DashboardPage() {
   const [agentOnChain, setAgentOnChain] = useState<{ owner: `0x${string}`; status: number; deployedAt: bigint; lastActionAt: bigint; rebalanceCount: bigint } | null>(null);
   const [nftName, setNftName] = useState<string | null>(null);
   const [nftLoading, setNftLoading] = useState(false);
+  const [intelligentData, setIntelligentData] = useState<Array<{ dataDescription: string; dataHash: `0x${string}` }>>([]);
+  const [authorizedUsers, setAuthorizedUsers] = useState<readonly `0x${string}`[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
@@ -134,8 +136,10 @@ export default function DashboardPage() {
       readContract(wagmiConfig, { address: AGENT_REGISTRY_ADDRESS, abi: AGENT_REGISTRY_ABI, functionName: 'getPerformanceScore', args: [agentId], chainId: zgTestnet.id }),
       readContract(wagmiConfig, { address: AGENT_REGISTRY_ADDRESS, abi: AGENT_REGISTRY_ABI, functionName: 'getAgent', args: [agentId], chainId: zgTestnet.id }),
       readContract(wagmiConfig, { address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'tokenURI', args: [agentId], chainId: zgTestnet.id }),
+      readContract(wagmiConfig, { address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'intelligentDataOf', args: [agentId], chainId: zgTestnet.id }),
+      readContract(wagmiConfig, { address: AGENT_NFT_ADDRESS, abi: AGENT_NFT_ABI, functionName: 'authorizedUsersOf', args: [agentId], chainId: zgTestnet.id }),
     ])
-      .then(([meta, perf, agent, uri]) => {
+      .then(([meta, perf, agent, uri, iData, authUsers]) => {
         if (meta.status === 'fulfilled') setNftMeta(meta.value as { dilithiumFingerprint: `0x${string}`; configRoot: `0x${string}`; actionSigFingerprint: `0x${string}`; skillKey: `0x${string}`; mintedAt: bigint });
         if (perf.status === 'fulfilled') setPerfScore(perf.value as { totalActions: bigint; successCount: bigint; pnlBasisPoints: bigint; lastUpdatedAt: bigint });
         if (agent.status === 'fulfilled') {
@@ -152,6 +156,8 @@ export default function DashboardPage() {
             setNftName(json.name);
           } catch { /* non-critical */ }
         }
+        if (iData.status === 'fulfilled') setIntelligentData(iData.value as Array<{ dataDescription: string; dataHash: `0x${string}` }>);
+        if (authUsers.status === 'fulfilled') setAuthorizedUsers(authUsers.value as readonly `0x${string}`[]);
       })
       .finally(() => setNftLoading(false));
   }, [address, activeAgent, agents]);
@@ -494,6 +500,23 @@ export default function DashboardPage() {
                   <Row label="Skill key">
                     <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 12, color: '#555555' }}>
                       {nftMeta.skillKey.slice(0, 10)}…
+                    </span>
+                  </Row>
+                  {intelligentData.length > 0 && (
+                    <div>
+                      <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8AADA4', marginBottom: 8 }}>Intelligent Data (ERC-7857)</div>
+                      {intelligentData.map(d => (
+                        <Row key={d.dataDescription} label={d.dataDescription.replace(/_/g, ' ')}>
+                          <span style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: '#555555' }}>
+                            {d.dataHash.slice(0, 10)}…{d.dataHash.slice(-4)}
+                          </span>
+                        </Row>
+                      ))}
+                    </div>
+                  )}
+                  <Row label="Authorized users">
+                    <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: authorizedUsers.length > 0 ? '#555555' : '#A8A49E' }}>
+                      {authorizedUsers.length > 0 ? `${authorizedUsers.length} address${authorizedUsers.length > 1 ? 'es' : ''}` : 'None'}
                     </span>
                   </Row>
                   <Row label="Deployed">
