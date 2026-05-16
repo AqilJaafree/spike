@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { signAction } from '@spike/pqc';
-import { inferMarketRegime } from '@spike/0g-client';
+import { inferMarketRegime, getQPUCache, storeQPUCache } from '@spike/0g-client';
 import type { MarketRegime } from '@spike/0g-client';
 
 const QUANTUM_URL = process.env.QUANTUM_SERVICE_URL ?? 'http://localhost:8000';
@@ -133,8 +133,26 @@ export async function runCycle(
   const baseRisk = config.riskLevel === 'aggressive' ? 0.8 : config.riskLevel === 'balanced' ? 0.5 : 0.2;
   const riskTolerance = Math.min(1, Math.max(0, baseRisk + REGIME_RISK_DELTA[regime]));
 
-  const { returns, covariance } = syntheticReturns(config.assets);
-  const qpu = await callOptimize(config.assets, returns, covariance, riskTolerance);
+  const portfolioHash = createHash('sha256')
+    .update([...config.assets].sort().join(',') + `:${riskTolerance.toFixed(2)}`)
+    .digest('hex');
+
+  let qpu: { weights: Record<string, number>; sharpe: number; backend_used: string };
+  const cachedQPU = await getQPUCache(portfolioHash);
+  if (cachedQPU) {
+    qpu = { weights: cachedQPU.weights, sharpe: cachedQPU.sharpe, backend_used: 'cache' };
+  } else {
+    const { returns, covariance } = syntheticReturns(config.assets);
+    const fresh = await callOptimize(config.assets, returns, covariance, riskTolerance);
+    qpu = fresh;
+    storeQPUCache(portfolioHash, {
+      weights: fresh.weights,
+      sharpe: fresh.sharpe,
+      frontier: [],
+      cachedAt: Date.now(),
+      portfolioHash,
+    });
+  }
 
   const n = config.assets.length;
   const equalWeight = 1 / n;
