@@ -6,6 +6,7 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network testnet",
+    "redeploy:testnet": "hardhat run scripts/redeployCore.ts --network testnet",
     "deploy:mainnet": "hardhat run scripts/deploy.ts --network mainnet",
     "verify": "hardhat verify --network testnet"
   },

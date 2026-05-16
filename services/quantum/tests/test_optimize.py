@@ -30,7 +30,7 @@ async def test_optimize_returns_valid_weights(sample_portfolio):
     assert set(data['weights'].keys()) == set(sample_portfolio['assets'])
     assert abs(sum(data['weights'].values()) - 1.0) < 0.01
     assert data['sharpe'] is not None
-    assert data['backend_used'] == 'aer_simulator'
+    assert data['backend_used'] == 'scipy_slsqp'
 
 
 @pytest.mark.asyncio

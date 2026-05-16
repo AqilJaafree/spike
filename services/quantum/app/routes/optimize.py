@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import numpy as np
 from app.services.portfolio_optimizer import run_portfolio_optimization
 
@@ -12,7 +13,7 @@ class OptimizeRequest(BaseModel):
     risk_tolerance: float = 0.5   # 0 = min risk, 1 = max return
     max_weight: float = 0.40
     min_weight: float = 0.05
-    portfolio_hash: str           # used as cache key
+    portfolio_hash: Optional[str] = None  # optional cache key
 
 class OptimizeResponse(BaseModel):
     weights: dict[str, float]

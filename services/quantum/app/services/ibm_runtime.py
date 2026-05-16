@@ -1,4 +1,2 @@
-from qiskit_aer import AerSimulator
-
-def get_simulator() -> AerSimulator:
-    return AerSimulator()
+def get_backend_name() -> str:
+    return 'scipy_slsqp'
