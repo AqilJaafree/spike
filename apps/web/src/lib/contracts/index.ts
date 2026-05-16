@@ -240,6 +240,22 @@ export const SKILL_REGISTRY_ABI = [
 ] as const;
 
 export const AGENT_NFT_ABI = [
+  // ─── ERC-721 ──────────────────────────────────────────────────────────────
+  {
+    name: 'ownerOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    name: 'tokenURI',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'string' }],
+  },
+  // ─── Spike metadata ───────────────────────────────────────────────────────
   {
     name: 'getAgentMeta',
     type: 'function',
@@ -259,19 +275,114 @@ export const AGENT_NFT_ABI = [
       },
     ],
   },
+  // ─── ERC-7857 ─────────────────────────────────────────────────────────────
   {
-    name: 'ownerOf',
+    name: 'intelligentDataOf',
     type: 'function',
     stateMutability: 'view',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    inputs: [{ name: '_tokenId', type: 'uint256' }],
+    outputs: [
+      {
+        name: 'data',
+        type: 'tuple[]',
+        components: [
+          { name: 'dataDescription', type: 'string' },
+          { name: 'dataHash', type: 'bytes32' },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'authorizedUsersOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: '_tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'address[]' }],
+  },
+  {
+    name: 'getDelegateAccess',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: '_user', type: 'address' }],
     outputs: [{ name: '', type: 'address' }],
   },
   {
-    name: 'tokenURI',
+    name: 'authorizeUsage',
     type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
-    outputs: [{ name: '', type: 'string' }],
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: '_tokenId', type: 'uint256' },
+      { name: '_user', type: 'address' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'revokeAuthorization',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: '_tokenId', type: 'uint256' },
+      { name: '_user', type: 'address' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'delegateAccess',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: '_assistant', type: 'address' }],
+    outputs: [],
+  },
+  {
+    name: 'iTransfer',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: '_to', type: 'address' },
+      { name: '_tokenId', type: 'uint256' },
+      { name: '_proofs', type: 'tuple[]', components: [] },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'iClone',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: '_to', type: 'address' },
+      { name: '_tokenId', type: 'uint256' },
+      { name: '_proofs', type: 'tuple[]', components: [] },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  // ─── ERC-7857 events ──────────────────────────────────────────────────────
+  {
+    name: 'Authorization',
+    type: 'event',
+    inputs: [
+      { name: '_from',    type: 'address', indexed: true },
+      { name: '_to',      type: 'address', indexed: true },
+      { name: '_tokenId', type: 'uint256', indexed: true },
+    ],
+  },
+  {
+    name: 'AuthorizationRevoked',
+    type: 'event',
+    inputs: [
+      { name: '_from',    type: 'address', indexed: true },
+      { name: '_to',      type: 'address', indexed: true },
+      { name: '_tokenId', type: 'uint256', indexed: true },
+    ],
+  },
+  {
+    name: 'Cloned',
+    type: 'event',
+    inputs: [
+      { name: '_tokenId',    type: 'uint256', indexed: true },
+      { name: '_newTokenId', type: 'uint256', indexed: true },
+      { name: '_from',       type: 'address', indexed: false },
+      { name: '_to',         type: 'address', indexed: false },
+    ],
   },
 ] as const;
 
