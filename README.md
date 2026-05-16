@@ -5,7 +5,8 @@ Quantum-safe, quantum-enhanced autonomous DeFi AI agent on [0G Network](https://
 Spike combines post-quantum cryptography (PQC), scipy-powered portfolio optimization, and 0G's decentralized storage + compute layers to deploy self-rebalancing on-chain agents whose configurations are Kyber-encrypted, Dilithium-signed, and stored on 0G Storage — never held in plaintext.
 
 ---
-https://github.com/user-attachments/assets/723ca769-c076-4df2-8431-79eb431f1248
+
+https://github.com/user-attachments/assets/0ee7435e-5cec-4931-902c-21ffd1050f1b
 
 ## Architecture
 
