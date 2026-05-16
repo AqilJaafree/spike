@@ -10,6 +10,7 @@ import { optimizePortfolio } from '@/lib/quantum/client';
 import { readContract } from '@wagmi/core';
 import { wagmiConfig } from '@/lib/wagmi/config';
 import { SKILL_REGISTRY_ADDRESS, SKILL_REGISTRY_ABI } from '@/lib/contracts';
+import { fetchPrices, formatPrice } from '@/lib/prices/client';
 
 interface SkillItem {
   id: string;
@@ -40,14 +41,14 @@ const RISKS = [
 ] as const;
 
 const ALL_ASSETS = [
-  { sym: 'ETH', name: 'Ethereum', price: '$2,841.20' },
-  { sym: 'BTC', name: 'Bitcoin', price: '$62,305.00' },
-  { sym: 'SOL', name: 'Solana', price: '$142.88' },
-  { sym: 'USDC', name: 'USD Coin', price: '$1.00' },
-  { sym: 'ARB', name: 'Arbitrum', price: '$0.88' },
-  { sym: 'OP', name: 'Optimism', price: '$1.92' },
-  { sym: 'LINK', name: 'Chainlink', price: '$13.40' },
-  { sym: 'AAVE', name: 'Aave', price: '$84.20' },
+  { sym: 'ETH',  name: 'Ethereum',  fallbackPrice: '$2,841' },
+  { sym: 'BTC',  name: 'Bitcoin',   fallbackPrice: '$62,305' },
+  { sym: 'SOL',  name: 'Solana',    fallbackPrice: '$143' },
+  { sym: 'USDC', name: 'USD Coin',  fallbackPrice: '$1.00' },
+  { sym: 'ARB',  name: 'Arbitrum',  fallbackPrice: '$0.88' },
+  { sym: 'OP',   name: 'Optimism',  fallbackPrice: '$1.92' },
+  { sym: 'LINK', name: 'Chainlink', fallbackPrice: '$13.40' },
+  { sym: 'AAVE', name: 'Aave',      fallbackPrice: '$84.20' },
 ];
 
 const FREQS = [
@@ -101,7 +102,7 @@ function RiskCard({ r, selected, onSelect }: { r: typeof RISKS[number]; selected
   );
 }
 
-function AssetRow({ a, selected, onToggle, last }: { a: typeof ALL_ASSETS[number]; selected: boolean; onToggle: (sym: string) => void; last: boolean }) {
+function AssetRow({ a, selected, onToggle, last, livePrice }: { a: typeof ALL_ASSETS[number]; selected: boolean; onToggle: (sym: string) => void; last: boolean; livePrice?: string }) {
   const [hov, setHov] = useState(false);
   return (
     <button onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
@@ -127,7 +128,7 @@ function AssetRow({ a, selected, onToggle, last }: { a: typeof ALL_ASSETS[number
         <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 14, color: '#555555' }}>{a.sym}</div>
         <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#A8A49E' }}>{a.name}</div>
       </div>
-      <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 13, color: '#A8A49E' }}>{a.price}</div>
+      <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 13, color: livePrice ? '#555555' : '#A8A49E' }}>{livePrice ?? a.fallbackPrice}</div>
     </button>
   );
 }
@@ -147,6 +148,13 @@ export default function ConfigurePage() {
   const [optimizing, setOptimizing] = useState(false);
   const [skills, setSkills] = useState<SkillItem[]>(FALLBACK_SKILLS);
   const [skillsLoading, setSkillsLoading] = useState(false);
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    fetchPrices(ALL_ASSETS.map(a => a.sym))
+      .then(setLivePrices)
+      .catch(() => null);
+  }, []);
 
   useEffect(() => {
     if (!SKILL_REGISTRY_ADDRESS) return;
@@ -156,6 +164,7 @@ export default function ConfigurePage() {
       abi: SKILL_REGISTRY_ABI,
       functionName: 'getAllSkills',
       args: [],
+      chainId: 16602,
     })
       .then((raw) => {
         const items = (raw as Array<{ id: string; name: string; category: number; storageHash: `0x${string}`; active: boolean; registeredAt: bigint }>)
@@ -271,7 +280,7 @@ export default function ConfigurePage() {
             <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 800, fontSize: 24, color: '#555555', marginBottom: 8 }}>Select assets</div>
             <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 28 }}>Choose 2–10 tokens. Spike will optimise allocation weights using quantum circuits.</div>
             <div style={{ border: '1.5px solid #CDC9C3', borderRadius: 20, overflow: 'hidden' }}>
-              {ALL_ASSETS.map((a, i) => <AssetRow key={a.sym} a={a} selected={selectedAssets.includes(a.sym)} onToggle={toggleAsset} last={i === ALL_ASSETS.length - 1} />)}
+              {ALL_ASSETS.map((a, i) => <AssetRow key={a.sym} a={a} selected={selectedAssets.includes(a.sym)} onToggle={toggleAsset} last={i === ALL_ASSETS.length - 1} livePrice={livePrices[a.sym] ? formatPrice(livePrices[a.sym]) : undefined} />)}
             </div>
             {errors.assets && <div style={{ marginTop: 12, color: '#842029', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13 }}>{errors.assets}</div>}
           </div>

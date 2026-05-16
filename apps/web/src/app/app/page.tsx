@@ -26,7 +26,6 @@ export default function AppPage() {
   function handleConnected(address: string) {
     const displayAddr = address.length > 10 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
     setWalletAddress(displayAddr);
-    sessionStorage.setItem('spike_wallet', displayAddr);
     setShowWalletModal(false);
     setTimeout(() => setPhase('pqc'), 400);
   }
@@ -40,6 +39,13 @@ export default function AppPage() {
     sessionStorage.setItem('spike_dilithium_fp', dilithiumFp);
     sessionStorage.setItem('spike_kyber_fp', kyberFp);
     sessionStorage.setItem('spike_pqc_active', '1');
+    // Persist the Dilithium SK as hex so review/page.tsx can sign with it
+    if (_bundle.dilithium?.secretKey) {
+      const skHex = Array.from(_bundle.dilithium.secretKey)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      sessionStorage.setItem('spike_dilithium_sk', skHex);
+    }
     if (encryptedData) {
       const toB64 = (buf: ArrayBuffer | Uint8Array) => {
         const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);

@@ -4,7 +4,6 @@ export const PQC_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_PQC_KEY_REGISTRY as 
 export const AGENT_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_AGENT_REGISTRY as `0x${string}` | undefined;
 export const SKILL_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_SKILL_REGISTRY as `0x${string}` | undefined;
 export const AGENT_NFT_ADDRESS = process.env.NEXT_PUBLIC_AGENT_NFT as `0x${string}` | undefined;
-export const TEE_VERIFIER_ADDRESS = process.env.NEXT_PUBLIC_TEE_VERIFIER as `0x${string}` | undefined;
 
 export const PQC_REGISTRY_ABI = [
   {
@@ -19,11 +18,49 @@ export const PQC_REGISTRY_ABI = [
     outputs: [],
   },
   {
+    name: 'rotate',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'newDilithiumFingerprint', type: 'bytes32' },
+      { name: 'newKyberFingerprint', type: 'bytes32' },
+      { name: 'newStorageRoot', type: 'bytes32' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'revoke',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+  {
     name: 'isRegistered',
     type: 'function',
     stateMutability: 'view',
     inputs: [{ name: 'wallet', type: 'address' }],
     outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    name: 'getKeys',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'wallet', type: 'address' }],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'dilithiumFingerprint', type: 'bytes32' },
+          { name: 'kyberFingerprint', type: 'bytes32' },
+          { name: 'storageRoot', type: 'bytes32' },
+          { name: 'registeredAt', type: 'uint256' },
+          { name: 'updatedAt', type: 'uint256' },
+          { name: 'active', type: 'bool' },
+        ],
+      },
+    ],
   },
 ] as const;
 
@@ -80,6 +117,47 @@ export const AGENT_REGISTRY_ABI = [
           { name: 'successCount', type: 'uint256' },
           { name: 'pnlBasisPoints', type: 'int256' },
           { name: 'lastUpdatedAt', type: 'uint256' },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'updateConfig',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'agentId', type: 'uint256' },
+      { name: 'newConfigRoot', type: 'bytes32' },
+      { name: 'newActionSigFingerprint', type: 'bytes32' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'withdrawAgent',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'agentId', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    name: 'getAgent',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'agentId', type: 'uint256' }],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'owner', type: 'address' },
+          { name: 'configRoot', type: 'bytes32' },
+          { name: 'actionSigFingerprint', type: 'bytes32' },
+          { name: 'attestationId', type: 'bytes32' },
+          { name: 'skillKey', type: 'bytes32' },
+          { name: 'status', type: 'uint8' },
+          { name: 'deployedAt', type: 'uint256' },
+          { name: 'lastActionAt', type: 'uint256' },
+          { name: 'rebalanceCount', type: 'uint256' },
         ],
       },
     ],
