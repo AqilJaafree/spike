@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { startAgentLoop, stopAgentLoop, type CycleResult } from '../market/scheduler.js';
+import { appendAuditLog, getAuditLog } from '@spike/0g-client';
+import type { AuditEntry } from '@spike/0g-client';
 
 export type PendingAction = {
   id: string;
@@ -84,6 +86,14 @@ const schedulerCallbacks = {
       recorded: true, // agent confirms its own actions; on-chain recordAction is optional
     });
     persist();
+    appendAuditLog({
+      agentId,
+      timestamp: Date.now(),
+      actionType: 'rebalance',
+      actionHash: result.actionHash,
+      attested: !!result.dilithiumSig,
+      details: { sharpe: result.sharpe, pnlBps: result.pnlBps, trades: result.trades.length },
+    }).catch(() => null);
   },
 };
 
@@ -115,6 +125,7 @@ router.post('/pause/:agentId', (req, res) => {
   agent.status = 'paused';
   agent.lastAction = new Date().toISOString();
   persist();
+  appendAuditLog({ agentId: id, timestamp: Date.now(), actionType: 'pause', attested: false }).catch(() => null);
   res.json({ success: true });
 });
 
@@ -126,6 +137,7 @@ router.post('/resume/:agentId', (req, res) => {
   agent.lastAction = new Date().toISOString();
   persist();
   startAgentLoop(id, schedulerCallbacks);
+  appendAuditLog({ agentId: id, timestamp: Date.now(), actionType: 'resume', attested: false }).catch(() => null);
   res.json({ success: true });
 });
 
@@ -158,7 +170,18 @@ router.post('/register', (req, res) => {
   });
   persist();
   startAgentLoop(agentId, schedulerCallbacks);
+  appendAuditLog({ agentId, timestamp: Date.now(), actionType: 'deploy', attested: false, details: { assets: config.assets, riskLevel: config.riskLevel } }).catch(() => null);
   res.json({ success: true, agentId });
+});
+
+router.get('/audit/:agentId', async (req, res) => {
+  const id = parseInt(req.params.agentId);
+  try {
+    const entries = await getAuditLog(id, 20);
+    res.json(entries);
+  } catch {
+    res.json([]);
+  }
 });
 
 const ActionSchema = z.object({

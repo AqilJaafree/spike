@@ -76,3 +76,22 @@ export async function ackAction(agentId: number, actionId: string): Promise<void
     body: JSON.stringify({ actionId }),
   });
 }
+
+export type AuditEntry = {
+  agentId: number;
+  timestamp: number;
+  actionType: 'deploy' | 'rebalance' | 'pause' | 'resume' | 'withdraw' | 'config-update';
+  actionHash?: string;
+  attested: boolean;
+  details?: Record<string, unknown>;
+};
+
+export async function getAgentAuditLog(agentId: number): Promise<AuditEntry[]> {
+  try {
+    const res = await fetch(`${AGENT_URL}/api/agent/audit/${agentId}`, { headers: agentHeaders() });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}

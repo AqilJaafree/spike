@@ -10,7 +10,7 @@ import type { AgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
 import { AGENT_REGISTRY_ADDRESS, AGENT_REGISTRY_ABI, AGENT_NFT_ADDRESS, AGENT_NFT_ABI } from '@/lib/contracts';
 import { zgTestnet } from '@/lib/wagmi/config';
-import { pauseAgent, resumeAgent, getPendingActions, ackAction, getAgentStatus, type AgentStatus } from '@/lib/agent/client';
+import { pauseAgent, resumeAgent, getPendingActions, ackAction, getAgentStatus, getAgentAuditLog, type AgentStatus, type AuditEntry } from '@/lib/agent/client';
 import { fetchPrices, formatPrice } from '@/lib/prices/client';
 
 interface Agent {
@@ -87,6 +87,7 @@ export default function DashboardPage() {
   const [nftLoading, setNftLoading] = useState(false);
   const [intelligentData, setIntelligentData] = useState<Array<{ dataDescription: string; dataHash: `0x${string}` }>>([]);
   const [authorizedUsers, setAuthorizedUsers] = useState<readonly `0x${string}`[]>([]);
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
@@ -177,6 +178,7 @@ export default function DashboardPage() {
       if (!cancelled) setAgentStatus(status);
     }
     poll();
+    getAgentAuditLog(agentId).then(setAuditLog).catch(() => null);
     const t = setInterval(poll, 60_000);
     return () => { cancelled = true; clearInterval(t); };
   }, [agents, activeAgent]);
@@ -604,6 +606,44 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+        </Card>
+
+        {/* 0G Audit trail */}
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <SectionLabel>Audit trail</SectionLabel>
+            <span style={{ background: '#555555', color: '#FBF7F0', borderRadius: 6, padding: '2px 7px', fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontWeight: 700, fontSize: 10, letterSpacing: '0.06em' }}>0G KV</span>
+          </div>
+          {auditLog.length === 0 ? (
+            <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 13, color: '#A8A49E' }}>No audit entries yet — entries are written to 0G Storage on each rebalance.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {auditLog.slice(0, 8).map((e, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', marginTop: 5, flexShrink: 0, background: e.actionType === 'rebalance' ? '#5e8880' : e.actionType === 'pause' ? '#856404' : e.actionType === 'resume' ? '#2d6a4f' : '#8AADA4' }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 700, fontSize: 13, color: '#555555', textTransform: 'capitalize' }}>{e.actionType}</span>
+                      {e.attested && (
+                        <span style={{ background: '#d4edda', color: '#2d6a4f', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 700, fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>ML-DSA ✓</span>
+                      )}
+                      <span style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 11, color: '#A8A49E', marginLeft: 'auto' }}>{relativeTime(new Date(e.timestamp).toISOString())}</span>
+                    </div>
+                    {e.details && (
+                      <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: '#8AADA4', marginTop: 2 }}>
+                        {Object.entries(e.details).map(([k, v]) => `${k}: ${v}`).join(' · ')}
+                      </div>
+                    )}
+                    {e.actionHash && (
+                      <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 10, color: '#CDC9C3', marginTop: 2 }}>
+                        {(e.actionHash as string).slice(0, 14)}…
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
 
         {/* Recent trades */}
