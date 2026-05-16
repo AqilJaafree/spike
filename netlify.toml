@@ -1,7 +1,7 @@
 [build]
   base    = "."
   command = "pnpm turbo run build --filter=@spike/web..."
-  publish = "apps/web/out"
+  publish = "apps/web/.next"
 
 [build.environment]
   NODE_VERSION = "20"
@@ -18,33 +18,3 @@
     Cross-Origin-Opener-Policy   = "same-origin"
     Cross-Origin-Embedder-Policy = "require-corp"
 
-# Direct-URL navigation — serve each page's own index.html
-[[redirects]]
-  from   = "/app/configure"
-  to     = "/app/configure/index.html"
-  status = 200
-
-[[redirects]]
-  from   = "/app/review"
-  to     = "/app/review/index.html"
-  status = 200
-
-[[redirects]]
-  from   = "/app/dashboard"
-  to     = "/app/dashboard/index.html"
-  status = 200
-
-[[redirects]]
-  from   = "/app/setup"
-  to     = "/app/setup/index.html"
-  status = 200
-
-[[redirects]]
-  from   = "/app/settings"
-  to     = "/app/settings/index.html"
-  status = 200
-
-[[redirects]]
-  from   = "/app"
-  to     = "/app/index.html"
-  status = 200
