@@ -37,3 +37,4 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+packages/agent/agents.json
