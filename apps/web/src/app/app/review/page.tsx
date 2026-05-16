@@ -241,7 +241,7 @@ export default function ReviewPage() {
 
         // Pre-register TEE attestation using the on-chain fingerprint so the
         // verifier lookup in deployAgent always matches.
-        await fetch('/api/attestation/register', {
+        const attRes = await fetch('/api/attestation/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -250,6 +250,10 @@ export default function ReviewPage() {
             sigFingerprint: actionSigFingerprintB32,
           }),
         });
+        if (!attRes.ok) {
+          const attErr = await attRes.text().catch(() => `HTTP ${attRes.status}`);
+          throw new Error(`TEE attestation failed (${attRes.status}): ${attErr}\n\nMake sure STORAGE_PRIVATE_KEY is set in your environment variables.`);
+        }
 
         const agentHash = await writeContractAsync({
           address: AGENT_REGISTRY_ADDRESS,
