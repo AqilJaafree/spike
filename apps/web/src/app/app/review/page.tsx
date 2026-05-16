@@ -3,11 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useWriteContract } from 'wagmi';
-import { readContract, waitForTransactionReceipt } from '@wagmi/core';
+import { getWalletClient, readContract, waitForTransactionReceipt } from '@wagmi/core';
 import { Btn, Card, SectionLabel, Row } from '@/components/ui/primitives';
 import { Icons } from '@/components/ui/icons';
 import type { AgentConfig } from '@spike/0g-client';
+import { uploadAgentConfig } from '@spike/0g-client';
 import { wagmiConfig } from '@/lib/wagmi/config';
+import { walletClientToSigner } from '@/lib/wagmi/ethers';
 import { keccak256, concat, toBytes } from 'viem';
 import {
   PQC_REGISTRY_ADDRESS, AGENT_REGISTRY_ADDRESS,
@@ -18,7 +20,7 @@ import { registerAgent } from '@/lib/agent/client';
 import type { OptimizeResult } from '@/lib/quantum/client';
 
 const DEPLOY_STEPS = [
-  'Encrypting your settings',
+  'Storing config on 0G Storage',
   'Signing with quantum key',
   'Sending to the network',
   'Confirming on blockchain',
@@ -58,6 +60,7 @@ export default function ReviewPage() {
   const [deployed, setDeployed] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
   const [isUpdate, setIsUpdate] = useState(false);
+  const [storageUploaded, setStorageUploaded] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem('spike_agent_config');
@@ -88,11 +91,24 @@ export default function ReviewPage() {
     setDeployStep(-1);
 
     try {
-      // Step 1 — hash config
+      // Step 1 — upload config to 0G Storage; fall back to local hash if unavailable
       setDeployStep(0);
       const skillKeyB32 = (sessionStorage.getItem('spike_skill_key') as `0x${string}`) ?? ZERO_B32;
-      const configRoot = configToBytes32(config);
-      await delay(500);
+      let configRoot: `0x${string}`;
+      try {
+        const walletClient = await getWalletClient(wagmiConfig, { chainId: 16602 });
+        if (!walletClient) throw new Error('no wallet client');
+        const signer = await walletClientToSigner(walletClient);
+        const ref = await uploadAgentConfig(config as AgentConfig, signer);
+        configRoot = fingerprintToBytes32(ref.rootHash);
+        sessionStorage.setItem('spike_storage_root', ref.rootHash);
+        setStorageUploaded(true);
+      } catch {
+        // 0G Storage unreachable or insufficient balance — hash locally
+        configRoot = configToBytes32(config);
+        setStorageUploaded(false);
+      }
+      await delay(300);
 
       // Step 2 — sign configRoot with Dilithium SK; store keccak256 commitment on-chain
       setDeployStep(1);
@@ -315,9 +331,16 @@ export default function ReviewPage() {
                 <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontWeight: 900, fontSize: 26, color: '#555555', marginBottom: 10 }}>
                   {isUpdate ? 'Strategy updated!' : 'Your bot is live!'}
                 </div>
-                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 28, lineHeight: 1.7 }}>
+                <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 14, color: '#A8A49E', marginBottom: 16, lineHeight: 1.7 }}>
                   {isUpdate ? 'Your agent is now running with the new configuration.' : 'Spike is now watching the market and managing your portfolio automatically.'}
                 </div>
+                {!isUpdate && (
+                  <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: storageUploaded ? '#2d6a4f' : '#A8A49E', background: '#D9E4DD', borderRadius: 10, padding: '8px 12px', marginBottom: 20, textAlign: 'left' }}>
+                    {storageUploaded
+                      ? `0G Storage ✓  ${(sessionStorage.getItem('spike_storage_root') ?? '').slice(0, 18)}…`
+                      : '0G Storage unavailable — local config hash used'}
+                  </div>
+                )}
                 <Btn size="lg" style={{ width: '100%' }} onClick={handleGoToDashboard}>Go to my portfolio →</Btn>
               </>
             ) : deployError ? (
@@ -347,6 +370,16 @@ export default function ReviewPage() {
                     </div>
                   ))}
                 </div>
+                {deployStep === 0 && (
+                  <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#A8A49E', padding: '8px 14px', background: '#D9E4DD', borderRadius: 10 }}>
+                    Uploading encrypted config to 0G decentralised storage…
+                  </div>
+                )}
+                {deployStep > 0 && !isUpdate && (
+                  <div style={{ fontFamily: "var(--font-dm-mono), 'DM Mono', monospace", fontSize: 11, color: storageUploaded ? '#2d6a4f' : '#A8A49E', padding: '6px 14px', background: '#D9E4DD', borderRadius: 10 }}>
+                    {storageUploaded ? '0G Storage ✓ config root on-chain' : '0G Storage unavailable — local hash used'}
+                  </div>
+                )}
                 {deployStep === 1 && (
                   <div style={{ fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", fontSize: 12, color: '#A8A49E', padding: '8px 14px', background: '#D9E4DD', borderRadius: 10 }}>
                     Signing with your ML-DSA-65 key…
