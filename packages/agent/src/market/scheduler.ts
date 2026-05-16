@@ -1,5 +1,7 @@
 import { createHash } from 'crypto';
 import { signAction } from '@spike/pqc';
+import { inferMarketRegime } from '@spike/0g-client';
+import type { MarketRegime } from '@spike/0g-client';
 
 const QUANTUM_URL = process.env.QUANTUM_SERVICE_URL ?? 'http://localhost:8000';
 
@@ -7,6 +9,13 @@ const COINGECKO_IDS: Record<string, string> = {
   ETH: 'ethereum', BTC: 'bitcoin', SOL: 'solana', USDC: 'usd-coin',
   ARB: 'arbitrum', MATIC: 'matic-network', LINK: 'chainlink', AVAX: 'avalanche-2',
 };
+
+const REGIME_RISK_DELTA: Record<MarketRegime, number> = {
+  bull: 0.1, bear: -0.1, volatile: -0.15, sideways: 0,
+};
+
+const PRICE_WINDOW_SIZE = 10;
+const priceWindow = new Map<number, Record<string, number[]>>();
 
 const BASE_VOLS: Record<string, number> = {
   ETH: 0.8, BTC: 0.7, SOL: 1.2, USDC: 0.01, ARB: 1.5, MATIC: 1.3, LINK: 1.0, AVAX: 1.1,
@@ -54,12 +63,11 @@ async function callOptimize(
   assets: string[],
   returns: number[][],
   covariance: number[][],
-  riskLevel: string,
+  riskTolerance: number,
 ): Promise<{ weights: Record<string, number>; sharpe: number; backend_used: string }> {
   const n = assets.length;
   const minWeight = 0.05;
-  // Ensure max_weight is high enough that a feasible solution exists: sum of n weights = 1
-  // requires max_weight >= 1 - (n-1)*min_weight
+  // max_weight must be >= 1 - (n-1)*minWeight so a feasible solution always exists
   const maxWeight = Math.max(0.40, 1 - (n - 1) * minWeight);
   const res = await fetch(`${QUANTUM_URL}/optimize`, {
     method: 'POST',
@@ -68,7 +76,7 @@ async function callOptimize(
       assets,
       returns,
       covariance,
-      risk_tolerance: riskLevel === 'aggressive' ? 0.8 : riskLevel === 'balanced' ? 0.5 : 0.2,
+      risk_tolerance: riskTolerance,
       max_weight: maxWeight,
       min_weight: minWeight,
     }),
@@ -104,8 +112,29 @@ export async function runCycle(
   dilithiumSk?: string,
 ): Promise<CycleResult> {
   const prices = await fetchPrices(config.assets);
+
+  // Maintain rolling price window per agent for regime detection
+  const window = priceWindow.get(agentId) ?? {};
+  for (const [asset, price] of Object.entries(prices)) {
+    const hist = window[asset] ?? [];
+    hist.push(price);
+    if (hist.length > PRICE_WINDOW_SIZE) hist.shift();
+    window[asset] = hist;
+  }
+  priceWindow.set(agentId, window);
+
+  const priceHistoryArr = config.assets.map(asset => ({
+    asset,
+    prices: window[asset] ?? [prices[asset]],
+  }));
+
+  // null signer is safe: inferMarketRegime only uses it when ZG_INFERENCE_PROVIDER is set
+  const regime = await inferMarketRegime(null as any, priceHistoryArr);
+  const baseRisk = config.riskLevel === 'aggressive' ? 0.8 : config.riskLevel === 'balanced' ? 0.5 : 0.2;
+  const riskTolerance = Math.min(1, Math.max(0, baseRisk + REGIME_RISK_DELTA[regime]));
+
   const { returns, covariance } = syntheticReturns(config.assets);
-  const qpu = await callOptimize(config.assets, returns, covariance, config.riskLevel);
+  const qpu = await callOptimize(config.assets, returns, covariance, riskTolerance);
 
   const n = config.assets.length;
   const equalWeight = 1 / n;
@@ -150,7 +179,8 @@ export async function runCycle(
   }
 
   console.log(
-    `[agent:${agentId}] drift=${maxDrift.toFixed(4)} threshold=${threshold.toFixed(2)} ` +
+    `[agent:${agentId}] regime=${regime} risk=${riskTolerance.toFixed(2)} ` +
+    `drift=${maxDrift.toFixed(4)} threshold=${threshold.toFixed(2)} ` +
     `rebalanced=${rebalanced} sharpe=${qpu.sharpe.toFixed(3)} backend=${qpu.backend_used}` +
     (dilithiumSig ? ` dilithium=signed(${dilithiumSig.length / 2}B)` : ' dilithium=unsigned')
   );
